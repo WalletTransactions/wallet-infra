@@ -1,0 +1,101 @@
+# Postgres — как и в compose.yaml, ОДИН инстанс, ТРИ роли (мигратор/auth/
+# wallet), см. infra/db/README.md "Три роли". Секреты (db-credentials) и ConfigMap
+# db-init-script в этом файле НЕ заводятся — их создаёт infra/k8s/apply.sh из
+# infra/db/.env и infra/db/init-db.sh (см. infra/k8s/README.md), сюда попадают только ссылки
+# на них по имени. Причина: infra/db/init-db.sh — самостоятельный файл (не копия
+# внутри YAML), чтобы не рассинхронизироваться при правках и не мучиться с
+# YAML-отступами многострочного shell-скрипта.
+#
+# Deployment, не StatefulSet — для одного локального инстанса с одним PVC
+# разницы нет (реального шардирования/масштабирования тут не будет), а
+# Deployment проще читать тем, кто уже привык к compose.yaml.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: db-data
+  namespace: wallet-transaction
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: db
+  namespace: wallet-transaction
+spec:
+  selector:
+    app: db
+  ports:
+    - port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: db
+  namespace: wallet-transaction
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate # два pod'а с одним и тем же RWO-volume одновременно не встанут
+  selector:
+    matchLabels:
+      app: db
+  template:
+    metadata:
+      labels:
+        app: db
+    spec:
+      containers:
+        - name: db
+          image: docker.io/library/postgres:16-alpine
+          envFrom:
+            # Даёт AUTH_POSTGRES_*/WALLET_POSTGRES_*/MIGRATOR_POSTGRES_* —
+            # их читает init-db.sh (см. compose.yaml, оригинальный комментарий
+            # там же). Сам секрет создаётся из infra/db/.env как есть, см.
+            # infra/k8s/generate-secrets.sh.
+            - secretRef:
+                name: db-credentials
+          env:
+            # Слева — имена, которых требует сам образ postgres (см. тот же
+            # комментарий в compose.yaml) — bootstrap-пара МИГРАТОРА.
+            - name: POSTGRES_USER
+              valueFrom: { secretKeyRef: { name: db-credentials, key: MIGRATOR_POSTGRES_USER } }
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: db-credentials, key: MIGRATOR_POSTGRES_PASSWORD } }
+            - name: POSTGRES_DB
+              valueFrom: { secretKeyRef: { name: db-credentials, key: MIGRATOR_POSTGRES_DB } }
+            # Подпапка, не корень volume — на некоторых StorageClass'ах в
+            # корне уже лежит lost+found, из-за чего образ отказывается
+            # инициализироваться ("data directory has wrong ownership").
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - containerPort: 5432
+          volumeMounts:
+            - name: db-data
+              mountPath: /var/lib/postgresql/data
+            - name: init-script
+              mountPath: /docker-entrypoint-initdb.d/init-db.sh
+              subPath: init-db.sh
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "$(POSTGRES_USER)", "-d", "$(POSTGRES_DB)"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "$(POSTGRES_USER)", "-d", "$(POSTGRES_DB)"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+      volumes:
+        - name: db-data
+          persistentVolumeClaim:
+            claimName: db-data
+        - name: init-script
+          configMap:
+            name: db-init-script
+            defaultMode: 0755

@@ -1,0 +1,95 @@
+@startuml wallet-telegram-llm-sequence
+title WalletTransaction — Telegram-бот + LM Studio: трата свободным текстом и вопросы (ПЛАН, фазы 3–4)
+
+skinparam sequenceMessageAlign left
+skinparam wrapWidth 260
+
+actor "Пользователь" as U
+participant "Telegram Bot API" as TG
+participant "wallet-telegram\nBot / resolver" as BOT
+participant "llm_client\n(OpenAI-диалект)" as LLM
+participant "LM Studio на хосте\nhost.docker.internal:1234/v1" as LMS
+database "Redis\n(черновики, история\nдиалога, TTL)" as REDIS
+participant "wallet-report" as REPORT
+participant "wallet-api" as API
+
+note over U, API
+  ПЛАН (org/docs/TODO_telegram_bot.md, §4 и §4a). Реализованы шаги 1–5 и 7:
+  связывание и команды чтения. Этой схемы в коде ещё нет.
+  Инвариант: LLM никогда не пишет в кошелёк. Запись — только по кнопке, её обрабатывает детерминированный код.
+end note
+
+== Маршрутизация сообщения ==
+
+U -> TG : текст
+TG --> BOT : update
+alt команда (/wallets, /last, …)
+  BOT -> BOT : обработчик команды (без LLM)
+else строгий формат «350 продукты @тинькофф вчера»
+  BOT -> BOT : parser/strict → resolver → сразу push + «Отменить» (шаг 6, без LLM)
+else всё остальное → LLM
+end
+
+== Фаза 3: трата свободным текстом (structured output) ==
+
+U -> TG : «вчера на кофе с коллегами ушло 450»
+TG --> BOT : update
+BOT -> REPORT : accounts (кошельки, категории) — имена для промпта
+BOT -> LLM : parse(text, имена категорий/кошельков,\nсегодня в tz пользователя, few-shot)
+LLM -> LMS : POST /v1/chat/completions\nresponse_format: json_schema\n{amount, currency?, category, wallet?, date?, comment?, confidence}\nтаймаут ~15 с
+alt LM Studio недоступна / таймаут
+  BOT -> TG : «Не понял, введите в формате 350 продукты»\n(бот без LLM остаётся рабочим)
+else ответ
+  LMS --> LLM : {"amount":"450","category":"Кафе","date":"2026-09-28",…}
+  LLM --> BOT : черновик
+  BOT -> BOT : тот же resolver и валидация, что у строгого формата:\nимя — только из списка пользователя,\nсумма обязана встречаться в исходном тексте\n(защита от галлюцинаций)
+  BOT -> REDIS : черновик, TTL ~15 мин
+  BOT -> TG : карточка «450,00 ₽ · Кафе · Тинькофф · вчера»\n[✓ Записать] [Категория…] [Кошелёк…] [✕]
+  U -> TG : ✓ Записать
+  TG --> BOT : callback_query
+  BOT -> REDIS : взять черновик
+  BOT -> API : POST /sync/push {operation}\nbatch_id = uuidv5(tg_user_id, update_id)\nBearer = access пользователя
+  API --> BOT : 200 (или 409 → понятное сообщение)
+  BOT -> TG : «✓ записано» (answerCallbackQuery, editMessageText)
+end
+
+== Фаза 4: вопросы — агентный цикл с инструментами ==
+
+U -> TG : «сколько я потратил на кафе в сентябре?»
+TG --> BOT : update
+BOT -> REDIS : история диалога (последние N реплик)
+loop не больше 5 шагов, общий таймаут ~30 с, sendChatAction typing
+  BOT -> LLM : messages + tools (реестр tools/)
+  LLM -> LMS : POST /v1/chat/completions {tools: [...]}
+  LMS --> LLM : tool_calls: expense_by_category(from=2026-09-01, to=2026-09-30)
+  LLM --> BOT : tool_calls
+  BOT -> REPORT : GET /api/reports/expense-structure?… (UserCtx из tg_link:\nuser/ledger/JWT подставляет бот — у LLM нет user_id)
+  REPORT --> BOT : компактный JSON
+  BOT -> LLM : role: tool, результат
+end
+LMS --> LLM : финальный текст (цифры — из результатов инструментов,\nне посчитаны моделью)
+BOT -> TG : ответ
+
+note right of BOT
+  Инструменты только read: list_wallets,
+  list_categories, get_balance, list_operations,
+  expense_by_category, income_expense_by_month.
+  draft_expense — ничего не пишет: кладёт
+  черновик и показывает ту же карточку
+  подтверждения. push/delete у LLM нет.
+end note
+
+== Фаза 4.2: тот же реестр как MCP ==
+
+participant "MCP-клиент\n(LM Studio mcp.json,\nClaude Desktop/Code)" as MCP
+MCP -> BOT : POST /mcp (Streamable HTTP, JSON-RPC)\ntools/list, tools/call\nAuthorization: Bearer (device-токен «MCP»)
+BOT -> REPORT : тот же handler инструмента
+REPORT --> BOT
+BOT --> MCP : результат
+note right of MCP
+  draft_expense через MCP не публикуется:
+  без Telegram-кнопки нет честного
+  подтверждения записи.
+end note
+
+@enduml

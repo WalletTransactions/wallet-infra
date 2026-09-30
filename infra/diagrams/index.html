@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>WalletTransactions — диаграммы (wallet-infra/infra/diagrams)</title>
+<style>
+  body { font-family: sans-serif; margin: 0; background: #1e1e1e; color: #ddd; }
+  header { padding: 12px 20px; background: #2a2a2a; position: sticky; top: 0; z-index: 1; }
+  nav a { color: #8ab4f8; margin-right: 16px; text-decoration: none; }
+  nav a:hover { text-decoration: underline; }
+  section { padding: 20px; border-top: 1px solid #444; }
+  h2 { color: #fff; }
+  .svg-box { background: #fff; border-radius: 6px; overflow: auto; padding: 8px; }
+  .svg-box img { max-width: 100%; }
+</style>
+</head>
+<body>
+<header>
+  <nav>
+    <a href="#sequence">sequence</a>
+    <a href="#components">components</a>
+    <a href="#invite">invite-sequence</a>
+    <a href="#sync">sync-sequence</a>
+    <a href="#logging">logging</a>
+    <a href="#tg-components">telegram-components</a>
+    <a href="#tg-link">telegram-link</a>
+    <a href="#tg-commands">telegram-commands</a>
+    <a href="#tg-llm">telegram-llm (план)</a>
+  </nav>
+</header>
+
+<section id="sequence">
+  <h2>sequence.puml — детальный сиквенс: анонимный визит → логин → защищённый вызов → refresh → logout</h2>
+  <div class="svg-box"><img src="wallet-transaction-sequence.svg" alt="sequence"></div>
+</section>
+
+<section id="components">
+  <h2>components.puml — статическая схема компонентов и роутинга гейтвея</h2>
+  <div class="svg-box"><img src="wallet-transaction-components.svg" alt="components"></div>
+</section>
+
+<section id="invite">
+  <h2>invite-sequence.puml — приглашение в леджер по одноразовой ссылке</h2>
+  <div class="svg-box"><img src="wallet-invite-sequence.svg" alt="invite-sequence"></div>
+</section>
+
+<section id="sync">
+  <h2>sync-sequence.puml — мобильная синхронизация (push/pull)</h2>
+  <div class="svg-box"><img src="wallet-sync-sequence.svg" alt="sync-sequence"></div>
+</section>
+
+<section id="logging">
+  <h2>logging.puml — схема логирования/наблюдаемости</h2>
+  <div class="svg-box"><img src="wallet-transaction-logging.svg" alt="logging"></div>
+</section>
+
+<section id="tg-components">
+  <h2>telegram-components.puml — Telegram-бот и LM Studio: компоненты и связи</h2>
+  <div class="svg-box"><img src="wallet-telegram-components.svg" alt="telegram-components"></div>
+</section>
+
+<section id="tg-link">
+  <h2>telegram-link-sequence.puml — подключение и отключение бота</h2>
+  <div class="svg-box"><img src="wallet-telegram-link-sequence.svg" alt="telegram-link-sequence"></div>
+</section>
+
+<section id="tg-commands">
+  <h2>telegram-commands-sequence.puml — цикл поллинга и команды чтения</h2>
+  <div class="svg-box"><img src="wallet-telegram-commands-sequence.svg" alt="telegram-commands-sequence"></div>
+</section>
+
+<section id="tg-llm">
+  <h2>telegram-llm-sequence.puml — трата свободным текстом и вопросы через LM Studio (план)</h2>
+  <div class="svg-box"><img src="wallet-telegram-llm-sequence.svg" alt="telegram-llm-sequence"></div>
+</section>
+
+</body>
+</html>

@@ -1,0 +1,126 @@
+# Стек логов — отдельный compose-проект "wallet-logging" (свой стек в Docker
+# Desktop), независимый от приложения (wallet-infra/compose.yaml): поднимается и
+# гасится сам по себе, общей сети с приложением не нужно — Fluent Bit читает
+# journald хоста, а не ходит к контейнерам по сети.
+#
+# Запуск (из каталога servers/):
+#   docker compose -f infra/logging/compose.yaml up -d
+#
+# Открывать в браузере: http://localhost:15601 (OpenSearch Dashboards).
+name: wallet-logging
+
+services:
+  # --- Логи: OpenSearch, а не Elastic/Kibana — начиная с 7.11 у
+  # Elasticsearch/Kibana/Filebeat лицензия Elastic License (не Apache2/open
+  # source), а OpenSearch (форк AWS) остаётся Apache 2.0 без каких-либо
+  # ограничений — для бесплатного локального стенда выбран он. ---
+  #
+  # Одна нода, security-плагин выключен — это чисто dev-стенд, не прод:
+  # TLS/пароли между узлами тут не нужны и только усложнили бы поднятие.
+  # НЕ переносите plugins.security.disabled=true никуда, кроме локальной
+  # разработки.
+  #
+  # OPENSEARCH_INITIAL_ADMIN_PASSWORD — начиная с образа 2.12 entrypoint
+  # ТРЕБУЕТ этот пароль на этапе bootstrap (demo-installer навешивает TLS-
+  # серты/admin-юзера) ДО того, как применится plugins.security.disabled=true
+  # из opensearch.yml — без него контейнер падает сразу же с "No custom admin
+  # password found". Сам пароль по факту не используется: security-плагин
+  # всё равно выключен в рантайме, это заглушка для прохождения проверки.
+  opensearch:
+    image: docker.io/opensearchproject/opensearch:2
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - plugins.security.disabled=true
+      - OPENSEARCH_INITIAL_ADMIN_PASSWORD=Wallet_Logs_Dev_2026!
+      - OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m
+    volumes:
+      - opensearch-data:/usr/share/opensearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -q '\"status\"' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    ports:
+      # Тот же приём, что у db/redis в wallet-infra/compose.yaml — порт хоста НЕ
+      # 9200, чтобы не конфликтовать с локальным Elastic/OpenSearch.
+      - "19200:9200"
+
+  opensearch-dashboards:
+    image: docker.io/opensearchproject/opensearch-dashboards:2
+    restart: unless-stopped
+    environment:
+      OPENSEARCH_HOSTS: http://opensearch:9200
+      DISABLE_SECURITY_DASHBOARDS_PLUGIN: "true"
+    depends_on:
+      opensearch:
+        condition: service_healthy
+    ports:
+      - "15601:5601" # открывать в браузере: http://localhost:15601
+
+  # Разовая настройка OpenSearch: шаблон для дневных индексов wallet-logs-*
+  # (0 реплик — нода одна) и ISM-политика "удалить через 14 дней" (см.
+  # opensearch-init.sh). Идемпотентно, как и dashboards-init ниже — штатно
+  # завершается с Exited(0). fluent-bit ждёт его завершения, чтобы первый же
+  # дневной индекс создался уже по шаблону и под политикой.
+  opensearch-init:
+    image: docker.io/curlimages/curl:8.9.1
+    volumes:
+      - ./opensearch-init.sh:/init/opensearch-init.sh:ro
+      - ./index_template.json:/init/index_template.json:ro
+      - ./ism_policy.json:/init/ism_policy.json:ro
+    depends_on:
+      opensearch:
+        condition: service_healthy
+    entrypoint: ["sh", "/init/opensearch-init.sh"]
+
+  # Разовый импорт index pattern + saved search в Dashboards (см.
+  # saved_objects.ndjson) — чтобы Discover сразу открывался с готовым видом
+  # логов, а не с пустым "no index pattern". Контейнер штатно завершается с
+  # кодом 0 после импорта — Exited(0) в `docker ps -a` для этого сервиса
+  # ожидаем, это не сбой, поэтому restart здесь не задан.
+  dashboards-init:
+    image: docker.io/curlimages/curl:8.9.1
+    volumes:
+      - ./saved_objects.ndjson:/tmp/saved_objects.ndjson:ro
+    depends_on:
+      - opensearch-dashboards
+    entrypoint:
+      - sh
+      - -c
+      - |
+        until curl -s -o /dev/null -w '%{http_code}' http://opensearch-dashboards:5601/api/status | grep -q 200; do
+          echo "waiting for dashboards..."; sleep 3
+        done
+        curl -s -X POST http://opensearch-dashboards:5601/api/saved_objects/_import?overwrite=true \
+          -H "osd-xsrf: true" \
+          -F "file=@/tmp/saved_objects.ndjson"
+        echo "saved objects imported"
+
+  # Собирает логи через journald, не push-драйвером — чтобы не переизобретать
+  # доставку логов вторым путём: сервисы приложения пишут stdout/stderr в
+  # journald (logging.driver=journald у каждого из них в wallet-infra/compose.yaml),
+  # Fluent Bit просто тянет их оттуда же, откуда их видит `journalctl` на
+  # хосте (см. fluent-bit.conf: [INPUT] Name systemd). Пути ниже — обычный
+  # journal этого Linux-хоста.
+  #
+  # Какие именно контейнеры попадают в индекс — вайтлист по CONTAINER_NAME в
+  # fluent-bit.conf (префикс "servers-" = compose-проект приложения).
+  fluent-bit:
+    image: docker.io/fluent/fluent-bit:3.1
+    restart: unless-stopped
+    volumes:
+      - /etc/machine-id:/etc/machine-id:ro
+      - /var/log/journal:/var/log/journal:ro
+      - /run/log/journal:/run/log/journal:ro
+      - ./fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
+      - ./parsers.conf:/fluent-bit/etc/parsers.conf:ro
+    depends_on:
+      opensearch-init:
+        condition: service_completed_successfully
+
+volumes:
+  # Явное имя — том достался от времён, когда логи жили в общем проекте
+  # "servers"; так накопленные индексы переехали вместе со стеком.
+  opensearch-data:
+    name: servers_opensearch-data

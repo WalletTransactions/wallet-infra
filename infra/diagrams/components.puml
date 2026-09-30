@@ -1,0 +1,173 @@
+@startuml wallet-transaction-components
+title WalletTransaction — компоненты и маршруты (текущее состояние,\nвкл. домен леджера/синка, CQRS-lite отчётов и доступ/приглашения — Фаза 6)
+
+skinparam componentStyle rectangle
+skinparam wrapWidth 200
+
+actor "Пользователь\n(браузер)" as User
+
+cloud "Google" as GoogleCloud {
+  [OAuth 2.0\n(Authorization Code + PKCE)] as GoogleOAuth
+  [JWKS\n(/oauth2/v3/certs)] as GoogleJWKS
+}
+
+node "Публичная точка входа" {
+  [wallet-gateway\n:8090] as GW
+}
+
+node "Внутренние сервисы\n(сейчас тоже слушают свои порты\nнапрямую — см. note ниже)" {
+  [google-auth\n(auth-service)\n:8080\n\n— OAuth-флоу + отложенное\n  подтверждение регистрации\n  нового пользователя\n— выпуск/ротация JWT-сессии\n  (access + refresh)\n— GET /auth/me, GET /admin/users —\n  JSON API, SPA (wallet-web) сама\n  рисует и дашборд, и админ-таблицу\n— POST /admin/users/:id/logout —\n  принудительный отзыв ВСЕХ\n  токенов пользователя (admin)] as AUTH
+  [wallet-api\n:8082\n\n— демо-CRUD /api/wallets (legacy)\n— домен леджера/синка (Фаза 2):\n  POST /sync/push, GET /sync/pull,\n  /sync/blobs — офлайн-first Android\n— доступ/приглашения (Фаза 6):\n  /api/ledger/*, /api/invites/accept\n— своя БД, читает JWT (JWKS), не выпускает] as API
+  [wallet-report\n:8084\n\n— CQRS-lite: GET /api/reports/*\n  (баланс/доход/расход/структура/\n  операции/обороты кошельков)\n— читает ТУ ЖЕ БД, что wallet-api,\n  но СВОИМ соединением, ролью\n  wallet_reader (только SELECT)\n— тоже читает JWT (JWKS) сам] as REPORTS
+}
+
+node "Статика (не C++, без JWT)" {
+  [wallet-web\n(nginx)\n:8083\n\n— SPA: index.html + app.js + style.css\n— НЕ читает и не проверяет JWT —\n  это делает app.js через fetch()\n  к /auth/me и /api/*\n— try_files .../index.html — фолбэк\n  для /join/<token> (Фаза 6) и любых\n  будущих клиентских маршрутов] as WEB
+}
+
+database "Postgres\n(auth-service)" as DB {
+  [users\n(+ справочник roles:\nuser / support / admin)] as T_USERS
+}
+
+database "Redis\n(auth-service,\nAOF + volume)" as REDIS {
+  [access_token:<hash>\n(TTL = ACCESS_TOKEN_TTL_SECS,\nзначение — user_id)] as T_ACCESS
+  [refresh_token:<hash>\n(TTL = REFRESH_TOKEN_TTL_SECS,\nодноразовый — GETDEL при\nкаждом /auth/refresh)] as T_REFRESH
+  [user_access_tokens:<id>\nuser_refresh_tokens:<id>\n(множества-индексы — SMEMBERS\nдля POST /admin/users/:id/logout)] as T_INDEX
+}
+
+database "Postgres\n(wallet-api,\nОТДЕЛЬНАЯ от auth база —\nwallet-report читает ЕЁ ЖЕ,\nсвоей ролью, см. note)" as DB_WALLET {
+  [wallets\n(демо, legacy — owner_id просто\nsub из токена, без FK)] as T_WALLETS
+  [ledger, ledger_member, app_user,\ndevice, sync_push_batch\n+ account/operation/currency/icon/blob\n(домен синка, Фаза 2 — см.\nsync-sequence.puml)] as T_LEDGER_DOMAIN
+  [ledger_invite\n(Фаза 6 — одноразовые\nпригласительные ссылки,\nсм. invite-sequence.puml)] as T_LEDGER_INVITE
+}
+
+User --> GW : HTTPS — всегда один origin
+
+GW --> AUTH    : "/auth/*, /admin/* — открыты (своя\n            auth/role-логика внутри, см. sequence.puml)"
+GW --> REPORTS : "/api/reports/* — JWT-гейт, ДО общего\n            /api/* ниже (иначе тот перехватил бы первым)"
+GW --> API     : "/api/*, /sync/* — JWT-гейт (подпись+exp),\n            затем proxy на wallet-api"
+GW --> WEB     : "всё остальное — открыт\n(фолбэк по умолчанию, включая /join/<token>)"
+
+GW ..> AUTH : "GET /.well-known/jwks.json\n(при старте + при незнакомом kid,\nкэшируется в памяти)"
+API ..> AUTH : "GET /.well-known/jwks.json\n(тот же кэш-клиент — wallet-api\nсам никого не логинит)"
+REPORTS ..> AUTH : "GET /.well-known/jwks.json\n(та же независимая проверка,\nтретья копия того же кода)"
+
+AUTH --> T_USERS
+AUTH --> T_REFRESH : SET..EX при выдаче,\nGETDEL при /auth/refresh\n(атомарная ротация),\nDEL при /auth/logout
+AUTH --> T_ACCESS : SET..EX при выдаче,\nEXISTS в authenticate(),\nDEL при /auth/logout
+AUTH --> T_INDEX : SADD+EXPIRE при каждой выдаче\n(access и refresh),\nSMEMBERS+DEL при\nPOST /admin/users/:id/logout
+AUTH --> GoogleOAuth : обмен code на id_token
+AUTH --> GoogleJWKS : проверка подписи id_token
+
+API --> T_WALLETS
+API --> T_LEDGER_DOMAIN : обычное read-write соединение\n(своя роль сервиса, DDL нет —\nсхему накатывает отдельный мигратор)
+API --> T_LEDGER_INVITE : создание/приём/отзыв/передача\nвладения (invites_repo.hpp)
+REPORTS --> T_LEDGER_DOMAIN : ТОЛЬКО SELECT, роль wallet_reader\n(GRANT SELECT, без прав записи —\nсм. wallet-api/schema/role/wallet_reader.sql)
+
+note bottom of GW
+  Проверяет ТОЛЬКО подпись + exp access-токена,
+  и только на /api/*. Роль/владение ресурсом —
+  не его забота, это остаётся на бекенде (см.
+  README wallet-gateway, "Почему не дублируем
+  авторизацию").
+end note
+
+note bottom of AUTH
+  Подписывает access-токены приватным RSA-ключом
+  (RS256) и публикует публичную часть на
+  /.well-known/jwks.json (см. стрелки от GW/API
+  сверху). Никакого общего секрета в конфиге
+  wallet-api/wallet-gateway больше нет — раньше был
+  общий JWT_SECRET (HS256), убрали именно этим
+  способом. wallet-web (nginx) сюда даже не заходит —
+  он не проверяет JWT вообще, это делает браузерный
+  app.js через fetch('/auth/me', ...) через GW.
+end note
+
+note right of AUTH
+  redirect_uri в OAuth-запросе (REDIRECT_URL в .env)
+  фиксирован, но указывает на ГЕЙТВЕЙ
+  (http://localhost:8090/auth/google/callback), не
+  сюда напрямую — Google возвращает браузер на GW,
+  тот проксирует /auth/google/callback сюда тем же
+  открытым префиксом /auth/* (см. README google-auth,
+  "Через гейтвей, не напрямую", и
+  infra/diagrams/sequence.puml, шаг 2). После логина —
+  302 на "/", а не своя HTML-страница: SPA (WEB) сама
+  подхватит сессию через /auth/me.
+end note
+
+note left of AUTH
+  AppState.pending (csrf state -> PKCE verifier) и
+  AppState.pending_signups (confirm_token -> проверенные
+  Google-claims нового пользователя) — В ПАМЯТИ процесса,
+  не в Postgres. При перезапуске сервиса или запросе на
+  другой инстанс (если их станет >1) незавершённый
+  логин/подтверждение регистрации просто оборвётся —
+  пользователь начнёт заново с /auth/google.
+end note
+
+note bottom of REDIS
+  access_token: НЕ источник истины о валидности — это
+  делает подпись+exp самого JWT. Смысл — дать
+  POST /auth/logout отозвать токен РАНЬШЕ его exp, но
+  только для проверок ВНУТРИ этого сервиса
+  (auth::authenticate(), см. GET /auth/me, /admin/*).
+  GW/API ниже НЕ ходят в Redis вообще — проверяют
+  подпись+exp по JWKS локально, про такое отозвание не
+  узнают (см. README google-auth, "Мгновенный logout —
+  только в auth-сервисе").
+
+  refresh_token: НАОБОРОТ, источник истины — единственная
+  копия секрета, сам факт его существования И ЕСТЬ
+  действительность (GETDEL — единственный способ его
+  предъявить и погасить одновременно).
+
+  Отсюда разная цена потери данных: контейнер без AOF+volume
+  потерял бы access_token — самоисправится за
+  ACCESS_TOKEN_TTL_SECS (обычно 15 минут); тот же контейнер
+  без AOF+volume потерял бы refresh_token — принудительный
+  релогин через Google для ВСЕХ, до REFRESH_TOKEN_TTL_SECS
+  (обычно 30 дней) никакого самоисправления. Поэтому этот
+  Redis — с AOF-персистентностью и volume (см. compose.yaml),
+  не эфемерный кэш.
+
+  user_access_tokens:<id>/user_refresh_tokens:<id>: обратный
+  индекс "все хэши токенов этого user_id" — по хэшу узнать
+  user_id можно и без индекса (это и есть значение ключа), а
+  наоборот Redis не умеет ("найти ключи по значению"). Нужен
+  ТОЛЬКО для POST /admin/users/:id/logout — обычные
+  authenticate()/take_refresh_token() его не читают вообще.
+  Не идеально синхронизирован (может копить "висячие" хэши уже
+  погашенных токенов) — не баг, DEL на отсутствующий ключ у
+  Redis просто no-op.
+end note
+
+note bottom of REPORTS
+  CQRS-lite (2026-09-08) — та же шареная Postgres-база, что у wallet-api
+  (те же миграции wallet-api/migrations/), но ОТДЕЛЬНЫЙ процесс с
+  ЕДИНСТВЕННЫМ read-only соединением ролью wallet_reader — не второе
+  соединение внутри wallet-api, как было до этой даты. Полный CQRS с
+  раздельными хранилищами и брокером событий обсуждён и сознательно
+  отклонён как избыточный для LAN-only MVP одного пользователя.
+  GET /api/reports/* здесь БОЛЬШЕ НЕ живёт в wallet-api вовсе.
+end note
+
+note right of T_LEDGER_INVITE
+  token_hash — sha256(сырой токен), hex — тем же приёмом, что REDIS
+  выше хранит access/refresh-токены google-auth. Сырой токен НИКОГДА не
+  попадает в эту базу — только в ответ POST /api/ledger/invites и в саму
+  ссылку (см. invite-sequence.puml). role допускает только member/reader —
+  второго owner'а ссылкой не пригласить, для передачи владения отдельная
+  операция (POST /api/ledger/transfer-owner, два UPDATE в одной
+  транзакции — uq_ledger_member_owner не может быть DEFERRABLE, это
+  частичный индекс, не constraint).
+end note
+
+note as N1
+  Сплошная стрелка (-->) — обычный вызов.
+  Пунктирная (..>) — server-to-server сбоку от
+  гейтвея, либо ещё не реализованная связь.
+end note
+
+@enduml

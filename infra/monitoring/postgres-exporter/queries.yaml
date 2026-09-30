@@ -1,0 +1,36 @@
+# Custom-запросы postgres-exporter (--extend.query-path, см.
+# wallet-infra/compose.yaml, сервис "postgres-exporter") — для метрик, которых
+# нет среди встроенных коллекторов (--help на образе v0.15.0): встроенный
+# коллектор "locks" считает ВСЕ блокировки из pg_locks по mode, без разбивки
+# granted/не granted, поэтому "сколько сейчас ЖДЁТ" отдельным запросом.
+#
+# Имя итоговой метрики = <ключ ниже> + "_" + <имя колонки> — в отличие от
+# встроенных коллекторов, --metric-prefix (по умолчанию "pg") к
+# custom-запросам НЕ применяется (проверено на этом стенде: колонка "count"
+# в запросе "locks_waiting" даёт метрику "locks_waiting_count", БЕЗ "pg_"
+# спереди) — имя в PromQL (см. record_run.sh) ровно такое, без pg_-префикса.
+#
+# ВАЖНО: с --auto-discover-databases (см. compose.yaml) postgres-exporter
+# выполняет ЭТОТ запрос ОТДЕЛЬНО на каждой обнаруженной базе (по разу на
+# DSN) — если запрос сам по себе через JOIN на pg_database возвращает
+# breakdown по ВСЕМ базам сразу, получится N одинаковых копий на N баз, и
+# коллизия одинаковых timeseries валит ВЕСЬ /metrics с HTTP 500 ("collected
+# metric ... was collected before with the same name and label values"),
+# проверено на этом стенде. current_database() вместо JOIN — запрос
+# намеренно отдаёт РОВНО одну строку ПРО ТУ базу, к которой подключён именно
+# этот DSN, так каждый прогон даёт уникальный datname без дублей (тот же
+# приём, что у встроенных коллекторов вроде stat_database).
+locks_waiting:
+  query: |
+    SELECT current_database() AS datname,
+           count(*) AS count
+    FROM pg_locks
+    WHERE database = (SELECT oid FROM pg_database WHERE datname = current_database())
+      AND NOT granted
+  metrics:
+    - datname:
+        usage: "LABEL"
+        description: "Database name"
+    - count:
+        usage: "GAUGE"
+        description: "Number of locks in pg_locks that are not yet granted (waiting), for this database"

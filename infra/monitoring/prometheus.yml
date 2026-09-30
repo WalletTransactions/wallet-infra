@@ -1,0 +1,72 @@
+# Конфиг Prometheus — источники метрик для дашбордов Grafana (см.
+# infra/monitoring/grafana/dashboards/, compose.yaml — сервисы "prometheus"/
+# "grafana"/"cadvisor"/"node-exporter"/"postgres-exporter"/"redis-exporter").
+#
+# scrape_interval 10s — тот же порядок, что и у healthcheck'ов сервисов в
+# compose.yaml (тоже 10s): чаще незачем на dev-стенде, реже — дашборды в
+# реальном времени выглядели бы дёрганными. evaluation_interval не задан —
+# правил алертинга в этом стенде нет вовсе (см. README проекта — Grafana
+# здесь для оперативного анализа человеком, не для автоматических алертов).
+global:
+  scrape_interval: 10s
+
+scrape_configs:
+  # Сам Prometheus — его собственные метрики о себе (scrape_duration,
+  # число TSDB-серий и т.п.) — минимальная самопроверка "жив ли сборщик".
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # Четыре HTTP-сервиса проекта — каждый отдаёт RPS/latency-percentiles/
+  # errors на /metrics (см. src/util/metrics.hpp в каждом сервисе). job
+  # (имя ниже) — единственный лейбл, отличающий их друг от друга в общих
+  # рядах http_requests_total/http_request_duration_seconds; отдельного
+  # "service"-лейбла в самих метриках нет намеренно (см. metrics.hpp).
+  - job_name: google-auth
+    static_configs:
+      - targets: ["google-auth:8080"]
+  - job_name: wallet-api
+    static_configs:
+      - targets: ["wallet-api:8082"]
+  - job_name: wallet-report
+    static_configs:
+      - targets: ["wallet-report:8084"]
+  - job_name: wallet-gateway
+    static_configs:
+      - targets: ["wallet-gateway:8090"]
+  - job_name: wallet-telegram
+    static_configs:
+      - targets: ["wallet-telegram:8086"]
+
+  # CPU/RAM/сеть ПО КОНТЕЙНЕРАМ (container_cpu_usage_seconds_total,
+  # container_memory_usage_bytes, container_network_{receive,transmit}_bytes_total,
+  # см. дашборд "Containers") — единственный сборщик здесь, которому нужны
+  # права на просмотр рантайма (cgroups/containers), не только на HTTP-порт
+  # приложения, см. подробный комментарий у самого сервиса "cadvisor" в
+  # compose.yaml про rootless-оговорки.
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["cadvisor:8080"]
+
+  # CPU/RAM/сеть ПО ХОСТУ (podman-machine — WSL-VM на Windows, физически
+  # общая для всех контейнеров этого стенда, см. компенсирующий комментарий
+  # у fluent-bit в compose.yaml про тот же journal этой же VM) — то же самое,
+  # что container-метрики выше дают ПО ОТДЕЛЬНОСТИ, но суммарно.
+  - job_name: node-exporter
+    static_configs:
+      - targets: ["node-exporter:9100"]
+
+  # DB connections/DB latency — см. GRANT pg_monitor в infra/db/init-db.sh и
+  # CREATE EXTENSION pg_stat_statements там же; --auto-discover-databases
+  # (см. сервис "postgres-exporter" в compose.yaml) обходит обе базы
+  # (auth+wallet) одним процессом.
+  - job_name: postgres-exporter
+    static_configs:
+      - targets: ["postgres-exporter:9187"]
+
+  # Активные access/refresh-токены google-auth (redis_connected_clients,
+  # redis_memory_used_bytes, redis_commands_processed_total и т.п.) — см.
+  # сервис "redis" в wallet-infra/compose.yaml, что именно тут хранится и почему с AOF.
+  - job_name: redis-exporter
+    static_configs:
+      - targets: ["redis-exporter:9121"]

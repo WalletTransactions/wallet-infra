@@ -1,0 +1,20 @@
+# Провайдер дашбордов — подхватывает всё из ../dashboards/*.json (см. volumes
+# у сервиса "grafana" в compose.yaml) при каждом старте контейнера. Не то же
+# самое, что datasources/datasource.yml рядом — этот файл настраивает САМ
+# механизм подхвата (откуда брать json), а не конкретный дашборд.
+apiVersion: 1
+
+providers:
+  - name: wallet-transactions
+    folder: "Wallet Transactions"
+    type: file
+    disableDeletion: false
+    # allowUiUpdates: false — дашборд правится в json в репозитории, а не
+    # руками в браузере: правка в UI пережила бы рестарт контейнера ровно до
+    # следующего podman compose up (провижининг перезаписал бы её обратно из
+    # файла), тихая потеря правок хуже, чем явный запрет их делать не там.
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/provisioning/dashboards/files
+      foldersFromFilesStructure: false

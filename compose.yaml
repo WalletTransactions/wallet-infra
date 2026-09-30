@@ -1,0 +1,470 @@
+# Запуск (ОБЯЗАТЕЛЬНО с --env-file — см. ниже, почему):
+#   docker compose --env-file infra/db/.env up -d --build
+#
+# Секреты и настройки каждого сервиса (GOOGLE_CLIENT_ID/SECRET, ADMIN_EMAILS,
+# COOKIE_SECURE...) берутся из его собственного .env (env_file ниже) — этот
+# файл переопределяет только то, что специфично для запуска в контейнерной
+# сети (HOST=0.0.0.0, адреса других сервисов по DNS-именам контейнеров вместо
+# localhost, DATABASE_URL на сервис db). Postgres-креды — из infra/db/.env (см.
+# infra/db/.env.example, MIGRATOR_POSTGRES_*/AUTH_POSTGRES_*/WALLET_POSTGRES_*) —
+# этот файл лежит НЕ рядом с compose.yaml (см. infra/db/README.md, почему), поэтому
+# compose его сам не найдёт: без явного --env-file все переменные ниже молча
+# подставятся пустыми строками — контейнер "db" поднимется, но с
+# логином/паролем "" (ровно так уже один раз случилось, см. историю чата).
+#
+# ТРИ роли на одном инстансе Postgres (контейнер "db"), не одна общая и не
+# две — см. infra/db/README.md, "Три роли", подробно там, коротко здесь:
+#   - MIGRATOR_POSTGRES_USER — bootstrap-роль самого образа postgres
+#     (фактически суперпользователь; сам образ требует, чтобы она называлась
+#     "POSTGRES_USER" — см. "environment" у "db" ниже, оттуда и маппинг).
+#     Владеет обеими базами и обеими схемами, единственная умеет DDL — ею
+#     же накатываются версионированные миграции структуры (infra/db/migrate.sh,
+#     см. "Миграции" в infra/db/README.md).
+#   - AUTH_POSTGRES_USER/AUTH_POSTGRES_DB — роль и база google-auth: только
+#     DML на свои таблицы (SELECT/INSERT/UPDATE/DELETE), ни DDL, ни TRUNCATE.
+#   - WALLET_POSTGRES_USER/WALLET_POSTGRES_DB — то же самое для wallet-api,
+#     своя база.
+# Раньше auth-роль/база и были той самой bootstrap-парой образа (буквально
+# POSTGRES_USER/POSTGRES_DB) — то есть суперпользователь на минимальных
+# правах не звучит, отсюда и разъехались на отдельного мигратора. Роли и
+# базы (обе) заводит и настраивает init-скрипт infra/db/init-db.sh (см. volumes у
+# "db" ниже) — образ сам bootstrap'ит только то, что ему передали как
+# POSTGRES_USER/POSTGRES_DB (сейчас это MIGRATOR_*, отдельная maintenance
+# роль/база, приложениями не используется), остальное — через
+# /docker-entrypoint-initdb.d.
+#
+# Перед первым запуском:
+#   cp infra/db/.env.example infra/db/.env
+#   cp google-auth/.env.example google-auth/.env      # + вписать Google OAuth креды
+#   cp wallet-api/.env.example wallet-api/.env
+#   cp wallet-report/.env.example wallet-report/.env
+#   cp wallet-gateway/.env.example wallet-gateway/.env
+#   cp wallet-telegram/.env.example wallet-telegram/.env   # + токен бота и секреты, см. его README
+#   openssl genrsa -out google-auth/jwt_signing_key.pem 2048
+#   docker compose --env-file infra/db/.env up -d db         # сначала только db...
+#   bash infra/db/migrate.sh auth up                          # ...накатить схему...
+#   bash infra/db/migrate.sh wallet up
+#   bash infra/db/migrate.sh telegram up
+#   docker compose --env-file infra/db/.env up -d --build     # ...и уже потом всё остальное
+#
+# Схема БОЛЬШЕ НЕ создаётся сама при первом старте "db" — только роли/базы
+# (init-db.sh, см. ниже). Таблицы — версионированные миграции, накатываются
+# отдельно (см. "Миграции" в infra/db/README.md); google-auth/wallet-api упадут при
+# старте с понятной ошибкой, если их накатить забыли (db::Database::
+# verify_schema() в каждом из них).
+#
+# wallet-web (nginx) — своего .env нет, статика секретов/адресов не содержит
+# (см. его README).
+#
+# Логи и метрики — ОТДЕЛЬНЫЕ стеки (свои compose-проекты, свои стеки в Docker
+# Desktop), поднимаются после приложения:
+#   docker compose -f infra/logging/compose.yaml up -d                            # OpenSearch + Fluent Bit
+#   docker compose -f infra/monitoring/compose.yaml --env-file infra/db/.env up -d # Prometheus + Grafana
+# Метрикам нужна сеть wallet-net этого файла (external у них) — поэтому
+# приложение первым.
+
+# Имя проекта задано явно, а не берётся из имени каталога: от префикса
+# "servers-" в именах контейнеров зависит вайтлист infra/logging/fluent-bit.conf.
+name: servers
+
+services:
+  db:
+    image: docker.io/library/postgres:16-alpine
+    restart: unless-stopped
+    # shared_preload_libraries — грузит pg_stat_statements В РАЗДЕЛЯЕМУЮ
+    # ПАМЯТЬ КЛАСТЕРА при старте процесса postgres (не то же самое, что
+    # CREATE EXTENSION — та лишь заводит SQL-обвязку поверх уже загруженного
+    # модуля, см. init-db.sh); без этого флага CREATE EXTENSION упал бы с
+    # "pg_stat_statements must be loaded via shared_preload_libraries".
+    # track_io_timing — довесок к track=all: время, потраченное на
+    # чтение/запись блоков (не только CPU самого запроса) — тоже видно в
+    # pg_stat_statements/pg_stat_database, полезно отличить "медленный SQL"
+    # от "упёрлись в диск". Оба флага требуют перезапуска процесса postgres
+    # (не потери данных — volume db-data остаётся), поэтому на уже
+    # существующем контейнере понадобится `docker compose up -d --build db`
+    # (пересоздание контейнера с новой командой запуска), не просто restart.
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - pg_stat_statements.track=all
+      - -c
+      - track_io_timing=on
+    # logging.driver=journald — только у сервисов из вайтлиста
+    # infra/logging/fluent-bit.conf (см. его же шапку и комментарий про
+    # "Сужаем до контейнеров ЭТОГО проекта"): нужно, чтобы Fluent Bit вообще
+    # видел записи этого контейнера в journald — по умолчанию Docker
+    # логирует в json-file, а не journald. Остальные сервисы стенда (не
+    # входящие в вайтлист) logging не переопределяют — они не нужны в
+    # OpenSearch, и лишняя запись в journald для них ни к чему.
+    logging:
+      driver: journald
+    environment:
+      # Слева — имена, которых требует сам образ postgres (не переименовать)
+      # — это bootstrap-пара МИГРАТОРА, не приложений. Справа — наши
+      # переменные из infra/db/.env.
+      POSTGRES_USER: ${MIGRATOR_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${MIGRATOR_POSTGRES_PASSWORD}
+      POSTGRES_DB: ${MIGRATOR_POSTGRES_DB}
+      # Читаются infra/db/init-db.sh (см. volumes ниже) — не сам Postgres, он про
+      # них не знает. Роль+база на каждый сервис, см. шапку файла и
+      # infra/db/README.md, "Три роли".
+      AUTH_POSTGRES_USER: ${AUTH_POSTGRES_USER}
+      AUTH_POSTGRES_PASSWORD: ${AUTH_POSTGRES_PASSWORD}
+      AUTH_POSTGRES_DB: ${AUTH_POSTGRES_DB}
+      WALLET_POSTGRES_USER: ${WALLET_POSTGRES_USER}
+      WALLET_POSTGRES_PASSWORD: ${WALLET_POSTGRES_PASSWORD}
+      WALLET_POSTGRES_DB: ${WALLET_POSTGRES_DB}
+      # Четвёртая роль — под ней ходит postgres-exporter (см. его сервис
+      # ниже), не приложение (см. "Три роли" в infra/db/README.md — эта роль в
+      # их число не входит намеренно). Только pg_monitor, см. init-db.sh.
+      MONITORING_POSTGRES_USER: ${MONITORING_POSTGRES_USER}
+      MONITORING_POSTGRES_PASSWORD: ${MONITORING_POSTGRES_PASSWORD}
+      # Пятая роль + своя, отдельная от кошелька, база — история прогонов
+      # нагрузочного контура (см. infra/db/migrations/perf/,
+      # wallet-report/loadtest/record_run.sh). Только DML на свои будущие
+      # таблицы, см. init-db.sh.
+      PERF_POSTGRES_USER: ${PERF_POSTGRES_USER}
+      PERF_POSTGRES_PASSWORD: ${PERF_POSTGRES_PASSWORD}
+      PERF_POSTGRES_DB: ${PERF_POSTGRES_DB}
+      # Шестая роль + своя база — Telegram-бот (wallet-telegram ниже).
+      TELEGRAM_POSTGRES_USER: ${TELEGRAM_POSTGRES_USER}
+      TELEGRAM_POSTGRES_PASSWORD: ${TELEGRAM_POSTGRES_PASSWORD}
+      TELEGRAM_POSTGRES_DB: ${TELEGRAM_POSTGRES_DB}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      - ./infra/db/init-db.sh:/docker-entrypoint-initdb.d/init-db.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${MIGRATOR_POSTGRES_USER} -d ${MIGRATOR_POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      # Проброс наружу — чтобы подключаться из Windows (DBeaver/pgAdmin/psql)
+      # напрямую, в обход контейнерной сети. Порт хоста нарочно НЕ 5432 —
+      # чтобы не конфликтовать с локальным Postgres, если он у вас тоже
+      # стоит. Внутри контейнерной сети сервисы всё равно ходят на
+      # "db:5432" (см. DATABASE_URL ниже) — этот проброс их не касается.
+      - "15432:5432"
+    networks:
+      - wallet-net
+
+  # Активные access- И refresh-токены google-auth (см. его README,
+  # "Персистентность" — ключи "access_token:<hash>"/"refresh_token:<hash>",
+  # TTL = ACCESS_TOKEN_TTL_SECS/REFRESH_TOKEN_TTL_SECS, EXPIRE снимает нужду
+  # в ручной чистке).
+  #
+  # С volume и AOF-персистентностью (--appendonly yes) — ОБЯЗАТЕЛЬНО для
+  # refresh-токенов: их TTL по умолчанию 30 ДНЕЙ, и это единственное, что
+  # позволяет не логиниться через Google каждые 15 минут (см. TTL
+  # access-токена). Без персистентности любое пересоздание контейнера (смена
+  # образа, `--build`, ручной `rm`) стёрло бы разом refresh-токены ВСЕХ
+  # пользователей — то есть принудительный релогин через Google для всех, а
+  # не тихое самоисправление за 15 минут, как было бы с одними access-
+  # токенами (и как было устроено до переезда refresh-токенов сюда же из
+  # Postgres). appendfsync не указан явно — берётся дефолт образа
+  # ("everysec": не более секунды несохранённых записей при падении
+  # процесса, не после каждой команды — компромисс между надёжностью и
+  # производительностью, которого для этого объёма записи с запасом
+  # достаточно).
+  #
+  # Порт наружу (15432 у db — тем же приёмом, порт хоста нарочно НЕ 6379,
+  # чтобы не конфликтовать с локальным Redis, если он у вас тоже стоит) —
+  # для подключения клиентом с Windows (redis-cli/DBeaver и
+  # т.п., см. README в корне репозитория). Всё ещё без пароля — раньше (пока
+  # тут были только access-токены) это было приемлемо ровно потому, что порт
+  # был закрыт снаружи, а даже утечка содержимого не давала ничего дольше
+  # 15 минут; теперь тут ещё и 30-дневные refresh-токены — тот, кто дотянется
+  # до порта, дотянется и до них. Держите этот проброс отключённым на чём-то
+  # кроме localhost-разработки, либо задайте requirepass здесь и
+  # REDIS_PASSWORD в google-auth/.env — оба уже поддержаны кодом.
+  redis:
+    image: docker.io/library/redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    logging:
+      driver: journald
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "16379:6379"
+    networks:
+      - wallet-net
+
+  google-auth:
+    build:
+      context: ../google-auth
+      dockerfile: Containerfile
+      # GIT_COMMIT — короткий хэш коммита, попадает в GET /version и в
+      # build_info метрику (см. CMakeLists.txt google-auth, "Версия
+      # приложения"). ${GIT_COMMIT:-unknown} — переменная окружения ТАМ, ГДЕ
+      # запущен сам `docker compose ... build/up --build`
+      # (GIT_COMMIT=$(git rev-parse --short HEAD) docker compose ...); не
+      # задана — "unknown", сборка не падает.
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+    restart: unless-stopped
+    logging:
+      driver: journald
+    env_file:
+      - ../google-auth/.env
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8080
+      DATABASE_URL: postgresql://${AUTH_POSTGRES_USER}:${AUTH_POSTGRES_PASSWORD}@db:5432/${AUTH_POSTGRES_DB}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    volumes:
+      - ../google-auth/jwt_signing_key.pem:/app/jwt_signing_key.pem:ro
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # GET /healthz — чистый liveness самого процесса (см. src/docs.cpp:
+    # handle_healthz), не проверяет Postgres/Redis отдельно — их падение уже
+    # видно по логам самого сервиса. curl есть в рантайм-образе только ради
+    # этой команды (см. Containerfile).
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    ports:
+      - "8080:8080" # опционально: только если нужен прямой доступ мимо гейтвея (см. README google-auth про redirect_uri)
+    networks:
+      - wallet-net
+
+  wallet-web:
+    build:
+      context: ../wallet-web
+      dockerfile: Containerfile
+    restart: unless-stopped
+    logging:
+      driver: journald
+    # Никакого env_file — nginx статики не читает переменные окружения, а
+    # сама статика не содержит секретов/адресов бекендов (см. README).
+    # wget — busybox wget, уже есть в образе nginx:1.27-alpine из коробки
+    # (в отличие от curl, который туда не входит) — доп. пакеты не нужны.
+    # 127.0.0.1, не localhost: busybox wget не делает happy-eyeballs фолбэк
+    # на IPv4 — "localhost" резолвится в этом образе ТОЛЬКО в ::1 (см.
+    # /etc/hosts), а nginx.conf слушает только "listen 80" (без "listen
+    # [::]:80") — с "localhost" получали connection refused при живом nginx
+    # (curl в других сервисах этого не заметил бы — у него фолбэк есть).
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:80/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    ports:
+      - "8083:80" # опционально, см. README wallet-web — открывать в браузере нужно гейтвей, не этот порт
+    networks:
+      - wallet-net
+
+  wallet-api:
+    build:
+      context: ../wallet-api
+      dockerfile: Containerfile
+      # GIT_COMMIT — см. комментарий у google-auth выше, тот же приём.
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+    restart: unless-stopped
+    logging:
+      driver: journald
+    env_file:
+      - ../wallet-api/.env
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8082
+      AUTH_SERVICE_URL: http://google-auth:8080
+      # Тот же инстанс, что у auth-сервиса (хост "db") — но СВОЯ роль
+      # (WALLET_POSTGRES_USER, не POSTGRES_USER) и своя база
+      # (WALLET_POSTGRES_DB, не POSTGRES_DB), см. "db" выше и README
+      # wallet-api, "Своя БД".
+      DATABASE_URL: postgresql://${WALLET_POSTGRES_USER}:${WALLET_POSTGRES_PASSWORD}@db:5432/${WALLET_POSTGRES_DB}
+    depends_on:
+      google-auth:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    # GET /healthz — чистый liveness самого процесса (см. src/docs.cpp:
+    # handle_healthz), не проверяет Postgres отдельно.
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8082/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    ports:
+      - "8082:8082" # опционально: прямой доступ мимо гейтвея, удобно для curl-проверок (см. README wallet-api)
+    networks:
+      - wallet-net
+
+  # CQRS-lite query-сторона, выделенная из wallet-api 2026-09-08 (см. его
+  # README, "Отчёты — выделены в отдельный сервис", и README wallet-report,
+  # "История"). ТА ЖЕ база, что у wallet-api (db/${WALLET_POSTGRES_DB}), но
+  # пул соединений (REPORTS_DB_POOL_SIZE, по умолчанию 8, см. src/db.hpp::Pool
+  # в wallet-report) — ролью wallet_reader, не WALLET_POSTGRES_*: логин/пароль
+  # этой роли зашиты литералом в саму роль
+  # (wallet-api/schema/role/wallet_reader.sql, "Пароль в репозитории. Это
+  # осознанно для локальной разработки"), заводить для них отдельные
+  # переменные было бы двойным источником истины. Никакого DATABASE_URL с
+  # правом писать в конфиге этого сервиса нет вовсе — не только код, но и
+  # сама конфигурация процесса физически не способна писать в базу.
+  wallet-report:
+    build:
+      context: ../wallet-report
+      dockerfile: Containerfile
+      # GIT_COMMIT — см. комментарий у google-auth выше, тот же приём.
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+    restart: unless-stopped
+    logging:
+      driver: journald
+    env_file:
+      - ../wallet-report/.env
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8084
+      AUTH_SERVICE_URL: http://google-auth:8080
+      REPORTS_DATABASE_URL: postgresql://wallet_reader:wallet_reader@db:5432/${WALLET_POSTGRES_DB}
+      # glibc заводит по арене malloc на поток (до 8×ядер), и каждая
+      # разрастается до пика самого тяжёлого запроса, прошедшего через этот
+      # поток, — RSS копился до сотен МБ и не падал (2026-09-22). Две арены
+      # + malloc_trim после крупных ответов (src/main.cpp) держат его ровным.
+      MALLOC_ARENA_MAX: "2"
+    depends_on:
+      google-auth:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    # GET /healthz — чистый liveness самого процесса, не проверяет
+    # reports_pool отдельно (тот же приём, что у wallet-api, см. src/docs.cpp).
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8084/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    ports:
+      - "8084:8084" # опционально: прямой доступ мимо гейтвея, удобно для curl-проверок (см. README wallet-report)
+    networks:
+      - wallet-net
+
+  wallet-gateway:
+    build:
+      context: ../wallet-gateway
+      dockerfile: Containerfile
+      # GIT_COMMIT — см. комментарий у google-auth выше, тот же приём.
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+    restart: unless-stopped
+    logging:
+      driver: journald
+    env_file:
+      - ../wallet-gateway/.env
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8090
+      AUTH_SERVICE_URL: http://google-auth:8080
+      WALLET_API_URL: http://wallet-api:8082
+      WALLET_REPORT_API_URL: http://wallet-report:8084
+      WALLET_WEB_URL: http://wallet-web:80
+    depends_on:
+      google-auth:
+        condition: service_healthy
+      wallet-api:
+        condition: service_healthy
+      wallet-report:
+        condition: service_healthy
+      wallet-web:
+        condition: service_healthy
+    # GET /healthz отдаётся самим гейтвеем, не проксируется на апстримы (см.
+    # src/docs.cpp) — проверяет только то, что жив сам гейтвей.
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8090/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    ports:
+      - "8090:8090" # это и есть адрес, который открывать в браузере
+    networks:
+      - wallet-net
+
+  # Telegram-бот для ввода трат (org/docs/TODO_telegram_bot.md). Входящих
+  # портов от интернета не нужно: long polling до api.telegram.org —
+  # исходящий HTTPS. К google-auth ходит НАПРЯМУЮ (POST
+  # /internal/telegram/exchange с X-Service-Secret), не через гейтвей: тот
+  # /internal/* не маршрутизирует. Своя база ${TELEGRAM_POSTGRES_DB}, к базе
+  # кошелька доступа нет.
+  #
+  # Один экземпляр (при getUpdates двух быть не может — Telegram отдаст 409
+  # второму). stop_grace_period — с запасом на текущий long poll
+  # (TELEGRAM_POLL_TIMEOUT_SECS, по умолчанию 25 с), иначе docker убьёт
+  # процесс SIGKILL посреди запроса.
+  wallet-telegram:
+    build:
+      context: ../wallet-telegram
+      dockerfile: Containerfile
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+    restart: unless-stopped
+    stop_grace_period: 35s
+    logging:
+      driver: journald
+    # required: false — чтобы отсутствие .env бота не ломало `docker compose
+    # up` всего стека. Без .env сервис сам завершится с понятной ошибкой
+    # ("TELEGRAM_BOT_TOKEN must be set").
+    env_file:
+      - path: ../wallet-telegram/.env
+        required: false
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8086
+      AUTH_SERVICE_URL: http://google-auth:8080
+      # Кошельки, балансы, операции — напрямую из wallet-report с токеном
+      # пользователя, не через гейтвей (тот нужен браузеру, боту — нет).
+      WALLET_REPORT_URL: http://wallet-report:8084
+      # Запись трат — POST /sync/push токеном бота (scope expense:write).
+      WALLET_API_URL: http://wallet-api:8082
+      DATABASE_URL: postgresql://${TELEGRAM_POSTGRES_USER}:${TELEGRAM_POSTGRES_PASSWORD}@db:5432/${TELEGRAM_POSTGRES_DB}
+    depends_on:
+      google-auth:
+        condition: service_healthy
+      wallet-report:
+        condition: service_healthy
+      wallet-api:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8086/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    ports:
+      - "8086:8086" # опционально: /metrics, /version для curl-проверок
+    networks:
+      - wallet-net
+
+networks:
+  # Явное имя (не "servers_wallet-net") — к этой сети как external
+  # подключается стек метрик (infra/monitoring/compose.yaml): Prometheus
+  # скрейпит сервисы по их DNS-именам, экспортёры ходят в db/redis.
+  wallet-net:
+    name: wallet-net
+
+volumes:
+  db-data:
+  redis-data:
+

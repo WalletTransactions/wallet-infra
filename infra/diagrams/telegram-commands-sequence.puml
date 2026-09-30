@@ -1,0 +1,102 @@
+@startuml wallet-telegram-commands-sequence
+title WalletTransaction — Telegram-бот: цикл поллинга и команда чтения (/wallets)
+
+skinparam sequenceMessageAlign left
+skinparam wrapWidth 260
+
+actor "Пользователь" as U
+participant "Telegram Bot API" as TG
+participant "wallet-telegram\nrun_poll_loop / Bot" as BOT
+participant "Sessions\n(кеш токенов бота в памяти)" as SESS
+database "wallet_telegram\n(tg_link, tg_update_offset)" as TGDB
+participant "google-auth" as AUTH
+participant "wallet-report" as REPORT
+
+== Старт и цикл поллинга ==
+
+BOT -> TGDB : verify_schema(), load_offset()
+loop пока не SIGTERM
+  BOT -> TG : getUpdates(offset, timeout=25,\nallowed_updates=[message, callback_query])
+  alt ошибка сети / Telegram / своей базы
+    BOT -> BOT : tg_poll_errors_total++,\nпауза 1 → 2 → … → 30 с
+  else апдейты пришли (или пустой ответ через 25 с)
+    loop каждый апдейт — строго по порядку, в этом же потоке
+      BOT -> BOT : новый trace_id; Bot.handle(update)
+      note right of BOT
+        Исключение в handle — апдейт логируется
+        (tg_update_failed) и ПРОПУСКАЕТСЯ:
+        один «ядовитый» апдейт не должен
+        навсегда остановить бота.
+      end note
+      BOT -> TGDB : tg_update_offset = update_id + 1
+    end
+  end
+end
+
+== Команда чтения: /wallets ==
+
+U -> TG : /wallets
+BOT -> TG : getUpdates
+TG --> BOT : update «/wallets»
+BOT -> BOT : private-чат, allowlist, parse_command
+BOT -> TGDB : find_link(tg_user_id)
+alt связки нет
+  BOT -> TG : «Бот ещё не подключён…»
+else связка есть
+  BOT -> SESS : access_token(tg_user_id)
+  alt в кеше токен, живой ещё > 60 с
+    SESS --> BOT : token
+  else кеша нет / истекает
+    SESS -> AUTH : POST /internal/telegram/token {tg_user_id}\nX-Service-Secret
+    alt 200
+      AUTH --> SESS : {access_token: JWT 5 мин, aud [wallet-report, wallet-api],\nscope "reports:read expense:write"}
+      SESS --> BOT : token (в кеш)
+    else 404 — связку удалили из веба / пользователя нет
+      SESS -> TGDB : DELETE tg_link (настройки)
+      BOT -> TG : «Бот отключён… подключите заново»
+    else сеть / 5xx
+      BOT -> TG : «Сервис временно недоступен»\n(настройки не трогаются)
+    end
+  end
+  note right of SESS
+    Токенов пользователя бот не хранит —
+    ни refresh, ни шифрования, ни ротации.
+  end note
+
+  BOT -> REPORT : GET /api/reports/accounts?kind=wallet\nAuthorization: Bearer токен бота
+  REPORT -> REPORT : authz::gate — iss google-auth,\naud ∋ wallet-report, scope ∋ reports:read
+  alt 401 на токен из кеша
+    BOT -> SESS : access_token(tg_user_id, force_refresh) — ровно один повтор
+    BOT -> REPORT : тот же GET с новым токеном
+  end
+  REPORT --> BOT : accounts[] (uuid, name, iso_code, symbol, precision)
+  BOT -> BOT : date = завтра в поясе tg_link.tz\n(f_balance_to_date считает строго ДО даты)\neq_currency = валюта кошелька по умолчанию\nили первого кошелька
+  BOT -> REPORT : GET /api/reports/balance?date=…&eq_currency=…
+  REPORT --> BOT : accounts[] {account_uuid, balance}
+  BOT -> TG : sendMessage\n«Кошельки:\n★ Revolut — −5,00 $\n• Тинькофф — 12 345,60 ₽»
+end
+
+note over U, REPORT
+  Остальные команды — тот же путь (find_link → Sessions → wallet-report):
+  /categories — accounts?kind=category без system_kind≠0; /last [N] — operations?limit=N;
+  /default <имя> — resolve_name (точное → уникальный префикс, ё=е) → tg_link.default_wallet_uuid;
+  /tz <пояс> — проверка по /usr/share/zoneinfo → tg_link.tz; /unlink — DELETE /internal/telegram/links/{id} в google-auth + DELETE tg_link.
+end note
+
+== Бот был выключен ==
+
+U -> TG : сообщения, пока бот лежит
+TG -> TG : держит неподтверждённые апдейты 24 ч
+BOT -> TGDB : после старта: load_offset()
+BOT -> TG : getUpdates(offset) — всё накопленное, по порядку
+note right of TG
+  Старше 24 ч — Telegram удаляет,
+  такие сообщения потеряны.
+  Если бот работал, но лежал google-auth /
+  wallet-report, — ответ «временно
+  недоступен», апдейт подтверждён:
+  для команд чтения это ок, для трат
+  (шаг 6) — нужна очередь неотправленных.
+end note
+
+@enduml

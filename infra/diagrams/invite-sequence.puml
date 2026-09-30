@@ -1,0 +1,184 @@
+@startuml wallet-invite-sequence
+title WalletTransaction — приглашение в леджер по одноразовой ссылке\n(org/docs/TODO_mobile_sync.md, Фаза 6: создание, приём через веб-логин, отзыв)
+
+skinparam sequenceMessageAlign center
+skinparam maxMessageSize 220
+
+actor "Владелец\n(браузер, уже залогинен)" as Owner
+actor "Приглашённый\n(браузер)" as Guest
+participant "wallet-gateway\n:8090" as GW
+participant "wallet-web\n(nginx, статика)\n:8083" as WEB
+participant "google-auth\n(auth-service)\n:8080" as AUTH
+participant "wallet-api\n:8082" as API
+participant "Google\n(OAuth + JWKS)" as GOOGLE
+database "Postgres\n(wallet-api)" as DB
+
+== 1. Владелец создаёт приглашение (вкладка «Доступ и приглашения») ==
+
+Owner -> GW: GET /api/ledger/members\nCookie: session=(jwt владельца)
+GW -> GW: **JWT-гейт**: подпись+exp (см. components.puml)
+GW -> API: proxy
+API -> API: session::current_user()
+API -> DB: SELECT ledger_id, role FROM ledger_member\nWHERE user_id=$1 (invites_repo::find_membership)
+DB --> API: role='owner'
+API -> DB: SELECT ... FROM ledger_member JOIN app_user\n(invites_repo::list_members)
+DB --> API: участники леджера
+API --> GW: 200 {"members":[...]}
+GW --> Owner: 200 JSON
+Owner -> Owner: app.js: renderAccessRoot() —\nвладелец видит форму «Пригласить человека»
+
+Owner -> Owner: выбирает роль (member|reader)\nи срок (2|7|30 дней)
+Owner -> GW: POST /api/ledger/invites\nCookie: session\n{"role":"reader","ttl_days":7}
+GW -> API: proxy (JWT-гейт пройден)
+API -> API: require_owner() — role == 'owner'? да
+API -> API: invites_repo::create_invite():\ntoken := hex(crypto::random_bytes(32))\ntoken_hash := hex(crypto::sha256(token))
+API -> DB: INSERT INTO ledger_invite\n(ledger_id, role, token_hash, created_by, expires_at)\nRETURNING id, created_at, expires_at
+DB --> API: новая строка
+API --> GW: 201 {"id","role","token","created_at","expires_at"}
+GW --> Owner: 201 JSON
+
+note right of API
+  Сырой ""token"" отдаётся РОВНО ЗДЕСЬ и БОЛЬШЕ НИГДЕ — в БД
+  лежит только ""token_hash"" (sha256, hex), тем же приёмом, что
+  google-auth хранит refresh/access-токены (см. components.puml,
+  REDIS). Поля ""link"" в ответе нет: ссылку
+  (""location.origin + '/join/' + token"") строит сам браузер —
+  wallet-api в LAN-only MVP не знает публичный адрес wallet-web
+  (разные пользователи могут открывать его по разным хостам).
+end note
+
+Owner -> Owner: app.js: показывает ссылку +\nкнопку "Копировать" (Clipboard API,\nс тихим фолбэком без него)
+Owner -> Owner: отправляет ссылку\nв любом мессенджере
+
+== 2. Приглашённый открывает ссылку — сессии ещё нет ==
+
+Guest -> GW: GET /join/<token>
+GW -> GW: find_route(): не /api/*, не /auth/*,\nне /admin/* — фолбэк по умолчанию
+GW -> WEB: proxy
+WEB --> GW: 200 index.html (nginx try_files\n$uri $uri/ /index.html — SPA-фолбэк)
+GW --> Guest: 200 HTML (+ app.js/style.css)
+
+Guest -> Guest: app.js: boot() — parseJoinPath(location.pathname)\nlocalStorage.setItem("pendingInviteToken", token)
+Guest -> GW: GET /auth/me\n(credentials:'include' — cookie "session" нет)
+GW -> AUTH: proxy (/auth/* без JWT-гейта)
+AUTH --> GW: 401 {"error":"unauthenticated"}
+GW --> Guest: 401
+Guest -> Guest: renderJoinLogin() — "Вас пригласили в общий\nкошелёк. Войдите через Google..."\n(та же кнопка href="/auth/google", что и\nобычный вход, см. sequence.puml, шаг 1)
+
+note over Guest, GW
+  ""localStorage"", а не параметр OAuth-редиректа: google-auth ПОСЛЕ
+  входа всегда возвращает браузер на ""/"" (302 Location, см.
+  sequence.puml, шаг 2 — ""AUTH --> GW: 302 Location: "/""""), НЕ на
+  исходный ""/join/<token>"". ""localStorage"" привязан к origin, не к
+  открытой странице — переживает полный уход на google.com и
+  обратно; правка ""google-auth"" (сквозной ""return_to""/""state"")
+  сознательно не понадобилась (org/docs/TODO_mobile_sync.md, п. 9.4).
+end note
+
+== 3. Вход через Google — тот же флоу, что и обычный логин ==
+
+Guest -> GW: GET /auth/google
+GW -> AUTH: proxy
+AUTH --> GW: 302 -> accounts.google.com/o/oauth2/v2/auth?...
+GW --> Guest: 302
+Guest -> GOOGLE: экран согласия
+GOOGLE --> Guest: 302 на redirect_uri (адрес ГЕЙТВЕЯ)
+Guest -> GW: GET /auth/google/callback?code&state
+GW -> AUTH: proxy
+AUTH -> GOOGLE: обмен code -> id_token, проверка подписи (JWKS)
+AUTH -> AUTH: get_or_create_user() /\nсценарий подтверждения регистрации\nнового пользователя (см. sequence.puml, шаг 2)
+AUTH -> AUTH: issue_tokens() — access (RS256) + refresh
+AUTH --> GW: 302 Location: "/"\nSet-Cookie session=(jwt), refresh_token=...
+GW --> Guest: 302 (на "/", НЕ на "/join/<token>")
+
+== 4. Возврат на "/" — приём приглашения ==
+
+Guest -> GW: GET / (следует за 302)
+GW -> WEB: proxy
+WEB --> GW: 200 index.html
+GW --> Guest: 200 HTML
+Guest -> Guest: app.js: boot() снова — GET /auth/me
+Guest -> GW: GET /auth/me\nCookie: session=(jwt)
+GW -> AUTH: proxy
+AUTH --> GW: 200 {"id","email","name","role"}
+GW --> Guest: 200 JSON
+Guest -> Guest: currentUser := user;\nlocalStorage хранит pendingInviteToken —\nacceptPendingInviteIfAny()
+
+Guest -> GW: POST /api/invites/accept\nCookie: session\n{"token":"<сырой>"}
+GW -> GW: **JWT-гейт**
+GW -> API: proxy
+API -> API: session::current_user()
+API -> DB: SELECT ledger_id FROM ledger_member\nWHERE user_id=$1 (find_membership — ДО транзакции)
+
+alt у приглашённого УЖЕ есть свой леджер (MVP: один леджер\nна пользователя, org/docs/TODO_mobile_sync.md п. 1.3)
+  DB --> API: строка есть
+  API --> GW: 409 {"error":"у вас уже есть свой кошелёк..."}
+  GW --> Guest: 409
+  Guest -> Guest: window.alert(...); "Отчёты" всё равно\nрисуются — СВОЙ, старый леджер
+  note right of API
+    Приглашение НЕ израсходовано этим отказом —
+    ""ledger_invite"" не тронут вовсе (проверка ДО начала
+    транзакции accept). Годится следующему, у кого леджера ещё нет.
+  end note
+else леджера ещё нет — можно принимать
+  DB --> API: 0 строк
+  API -> DB: BEGIN
+  API -> DB: INSERT INTO app_user (id, email)\nON CONFLICT (id) DO UPDATE SET email=...
+  note right of DB
+    ДО работы с ""ledger_invite"": ""used_by"" — FK на
+    ""app_user(id)"", а это может быть ПЕРВОЕ обращение
+    этого пользователя к wallet-api вообще (чистый
+    браузерный вход без единого ""/sync/*"").
+  end note
+  API -> DB: UPDATE ledger_invite SET used_at=now(), used_by=$user\nWHERE token_hash=sha256(token)\nAND used_at IS NULL AND revoked_at IS NULL\nAND expires_at > now()\nRETURNING ledger_id, role
+  alt 0 строк — использована/отозвана/просрочена
+    DB --> API: (пусто)
+    API -> DB: ROLLBACK
+    API --> GW: 410 {"error":"ссылка недействительна..."}
+    GW --> Guest: 410
+    Guest -> Guest: window.alert(...)
+  else найдена активная — ОДНОРАЗОВОСТЬ здесь:\nвторой одновременный accept тем же\nтокеном найдёт 0 строк выше
+    DB --> API: ledger_id, role
+    API -> DB: INSERT INTO ledger_member\n(ledger_id, user_id, role)
+    API -> DB: COMMIT
+    API --> GW: 200 {"ledger_id","role"}
+    GW --> Guest: 200 JSON
+    Guest -> Guest: localStorage.removeItem(...)\nwindow.alert("Приглашение принято...")\nhistory.replaceState(null,'','/')\nrenderReports() — уже В ЭТОМ леджере
+  end
+end
+
+== 5. Оба видят друг друга в «Доступ и приглашения» ==
+
+Owner -> GW: GET /api/ledger/members (обновление вкладки)
+GW -> API: proxy
+API -> DB: SELECT ... (list_members)
+DB --> API: владелец + приглашённый
+API --> GW: 200 {"members":[owner, guest]}
+GW --> Owner: 200 JSON
+
+== 6. Отзыв ссылки (пока не использована) ==
+
+Owner -> GW: DELETE /api/ledger/invites/:id\nCookie: session
+GW -> API: proxy
+API -> API: require_owner()
+API -> DB: UPDATE ledger_invite SET revoked_at=now()\nWHERE id=$1 AND ledger_id=$2\nAND used_at IS NULL AND revoked_at IS NULL\nAND expires_at > now()\nRETURNING id
+alt ещё активна
+  DB --> API: 1 строка
+  API --> GW: 204
+else уже использована/отозвана/просрочена
+  DB --> API: 0 строк
+  API --> GW: 404 {"error":"..."}
+end
+GW --> Owner: (форвардится как есть)
+
+note over Owner, DB
+  Роли — те же три значения, что в ""ledger_member.role""
+  (""owner""/""member""/""reader"", см. components.puml) —
+  ""ledger_invite.role"" сознательно допускает только ""member""/
+  ""reader"" (CHECK-констрейнт): второго владельца ссылкой не
+  пригласить, для передачи владения — отдельная операция
+  ""POST /api/ledger/transfer-owner"" (не показана на этой
+  диаграмме — не часть процесса приглашения).
+end note
+
+@enduml

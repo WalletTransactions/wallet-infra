@@ -1,0 +1,87 @@
+@startuml wallet-telegram-components
+title WalletTransaction — Telegram-бот и LM Studio: компоненты и связи
+
+skinparam componentStyle rectangle
+skinparam wrapWidth 240
+
+actor "Пользователь\n(Telegram на телефоне)" as USER
+actor "Пользователь\n(браузер)" as BROWSER
+
+cloud "Telegram Bot API\napi.telegram.org" as TG
+
+node "Хост (Linux, вне docker)" as HOST {
+  [LM Studio / lms server\nOpenAI-совместимый API :1234\n/v1/chat/completions, /v1/models\n\nфаза 3–4, ПЛАН] as LMS
+}
+
+node "compose-проект «servers» (сеть wallet-net)" as STACK {
+  [wallet-gateway :8090] as GW
+  [wallet-web (nginx)\nДоступ и приглашения →\nTelegram-бот: ссылка + QR] as WEB
+  [google-auth :8080\n/auth/telegram/link-code\n/auth/telegram/links (веб)\n/internal/telegram/exchange\n/internal/telegram/token\n/internal/telegram/links (unlink)] as AUTH
+  database "Postgres: auth\ntelegram_links:\ntg_user_id → user_id,\ndevice_id" as AUTHDB
+  [wallet-report :8084\n/api/reports/accounts\n/balance, /operations] as REPORT
+  [wallet-api :8082\n/sync/push\n\nшаг 6, ПЛАН] as API
+
+  node "wallet-telegram :8086" as BOT {
+    [run_poll_loop\n(главный поток,\nапдейты по одному)] as LOOP
+    [Bot\nкоманды, ответы] as BOTLOGIC
+    [Sessions\nкеш токенов бота\nпо tg_user_id (≤ 5 мин)] as SESS
+    [llm_client + tools/\n\nфаза 3–4, ПЛАН] as LLMC
+    [служебный HTTP\n/healthz /metrics\n/version /docs] as SVC
+  }
+
+  database "Postgres: wallet_telegram\n(роль wallet_telegram, только DML)\n\ntg_link — настройки: tg_user_id,\nchat_id, tz, default_wallet_uuid\n(секретов нет)\n\ntg_update_offset" as TGDB
+  database "Redis\n(код связывания\ntg_link_code:<sha256>, TTL 10 мин)" as REDIS
+
+  [Prometheus] as PROM
+  [fluent-bit → OpenSearch] as LOGS
+}
+
+USER --> TG : сообщения боту\n(личный чат)
+BROWSER --> GW : HTTPS/HTTP
+GW --> WEB : статика SPA
+GW --> AUTH : /auth/* (без JWT-гейта)
+
+LOOP --> TG : getUpdates (long polling, 25 с)\nsendMessage\n— только исходящий HTTPS
+LOOP --> BOTLOGIC
+BOTLOGIC --> SESS
+BOTLOGIC --> AUTH : POST /internal/telegram/exchange\n(X-Service-Secret, напрямую,\nне через гейтвей)
+SESS --> AUTH : POST /internal/telegram/token {tg_user_id}\n→ JWT 5 мин, aud [wallet-report, wallet-api],\nscope reports:read expense:write
+BOTLOGIC --> REPORT : GET /api/reports/*\nBearer = токен бота
+AUTH --> AUTHDB : связки
+BOTLOGIC ..> API : POST /sync/push\n(трата, шаг 6)
+BOTLOGIC ..> LLMC
+LLMC ..> LMS : LLM_URL=http://host.docker.internal:1234/v1\n(extra_hosts: host-gateway)
+BOTLOGIC --> TGDB : связки, offset
+AUTH --> REDIS : код связывания (GETDEL)
+
+PROM --> SVC : scrape /metrics
+BOT --> LOGS : stdout JSON → journald
+
+note right of TG
+  Telegram хранит неподтверждённые
+  апдейты 24 часа: бот, поднявшийся
+  после простоя, продолжит с offset
+  из tg_update_offset. Старше суток —
+  потеряны.
+end note
+
+note bottom of TGDB
+  К базе кошелька у бота доступа нет.
+  Доступ бота = связка в google-auth:
+  удалили из веба — следующий токен
+  не выдадут. В кошелёк бот пишет
+  только /sync/push со scope
+  expense:write (только новые
+  операции, шаг 6), от устройства
+  device.platform = telegram.
+end note
+
+note left of LMS
+  Инвариант: LLM никогда не пишет
+  в кошелёк. Только разбор текста в
+  черновик и read-only инструменты;
+  запись — по кнопке «✓ Записать»,
+  её обрабатывает детерминированный код.
+end note
+
+@enduml

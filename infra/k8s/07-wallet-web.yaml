@@ -1,0 +1,45 @@
+# wallet-web — статика (nginx), без .env и без секретов (см. его README).
+apiVersion: v1
+kind: Service
+metadata:
+  name: wallet-web
+  namespace: wallet-transaction
+spec:
+  selector:
+    app: wallet-web
+  ports:
+    - port: 80
+      targetPort: 80
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wallet-web
+  namespace: wallet-transaction
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: wallet-web
+  template:
+    metadata:
+      labels:
+        app: wallet-web
+    spec:
+      containers:
+        - name: wallet-web
+          image: wallet-transaction/wallet-web:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 80
+          # httpGet / — тот же путь, что и healthcheck в compose.yaml
+          # (try_files в nginx.conf сводит любой путь к index.html, см. его
+          # комментарий, так что специфичный путь не даёт доп. гарантий).
+          readinessProbe:
+            httpGet: { path: /, port: 80 }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /, port: 80 }
+            initialDelaySeconds: 5
+            periodSeconds: 10

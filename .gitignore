@@ -1,0 +1,15 @@
+
+# Общие правила (перенесены из .gitignore монорепозитория WalletTransactions,
+# 2026-10-01): локальные секреты, данные, логи, артефакты Windows.
+.env
+*.csv
+*.txt
+!CMakeLists.txt
+*.log
+*.lnk
+NUL
+__pycache__/
+*.pyc
+venv/
+# Временные файлы infra/k8s/apply.sh (отфильтрованные .env сервисов)
+infra/k8s/.*.env.filtered

@@ -1,0 +1,214 @@
+# Стек метрик — отдельный compose-проект "wallet-monitoring" (свой стек в
+# Docker Desktop): Prometheus + Grafana, для оперативного анализа (CPU/RAM/
+# RPS/latency p50-p99/DB connections/DB latency/сеть/errors) — отдельный
+# контур от логов (infra/logging/compose.yaml): те отвечают на "что произошло
+# у ЭТОГО запроса", эти — на "что происходит с системой прямо сейчас/за
+# последний час".
+#
+# В отличие от логов, этому стеку нужна сеть приложения: Prometheus скрейпит
+# /metrics сервисов, экспортёры ходят в db/redis, Grafana читает perf_history
+# из db. Поэтому wallet-net здесь external — её создаёт wallet-infra/compose.yaml,
+# и приложение должно быть поднято ПЕРВЫМ (иначе "network wallet-net declared
+# as external, but could not be found").
+#
+# Запуск (из каталога servers/; --env-file — ради MONITORING_POSTGRES_* у
+# postgres-exporter, тот же infra/db/.env, что и у приложения):
+#   docker compose -f infra/monitoring/compose.yaml --env-file infra/db/.env up -d
+#
+# Открывать в браузере: http://localhost:13000 (Grafana, admin/admin),
+# http://localhost:19090 (Prometheus).
+name: wallet-monitoring
+
+services:
+  # CPU/RAM/сеть ПО КОНТЕЙНЕРАМ. privileged:true и /rootfs, /var/run, /sys —
+  # обычный для cAdvisor набор, cgroups (cgroup v2, systemd-driver) видны
+  # полностью — но этого оказалось недостаточно (реальный инцидент
+  # 2026-09-16, все container_cpu_*/container_memory_*/container_network_*
+  # пустые, панели "Контейнеры" в wallet-overview.json ничего не рисуют):
+  # Docker здесь настроен с containerd-snapshotter (`docker info` →
+  # "Storage Driver: overlayfs, driver-type: io.containerd.snapshotter.v1"),
+  # а докеровский обработчик cAdvisor умеет искать RW-слой контейнера только
+  # по старой раскладке overlay2-графдрайвера
+  # (/var/lib/docker/image/overlayfs/layerdb/mounts/<id>/mount-id) — при
+  # containerd-snapshotter этого файла просто нет, лог cAdvisor заполнен
+  # "failed to identify the read-write layer ID ... no such file or
+  # directory" для каждого контейнера, ни один не регистрируется вообще
+  # (не только без файловой статистики — контейнер целиком не создаётся).
+  # Фикс — не трогать сам Docker (containerd-snapshotter — фича всего хоста,
+  # откатывать её ради одного cAdvisor не стоит), а включить у cAdvisor
+  # containerd-обработчик вместо докеровского: сокет уже виден (тот же
+  # /var/run:/var/run:ro, /run — симлинк на /var/run), не хватало только
+  # --containerd-namespace — дефолт "k8s.io" (расчёт на CRI/Kubernetes),
+  # а Docker с containerd держит СВОИ контейнеры в неймспейсе "moby"
+  # (`ctr -n moby containers list` на хосте — то же самое видно и в
+  # journalctl -u containerd).
+  #
+  # UPDATE (реальный повторный инцидент, та же дата расследования): одного
+  # --containerd-namespace НЕДОСТАТОЧНО — cAdvisor регистрирует ОБА
+  # обработчика сразу (докеровский И containerd), докеровский по-прежнему
+  # успешно подключается к /var/run/docker.sock (та же примонтированная
+  # /var/run) и по имени cgroup ("docker-<id>.scope") УСПЕВАЕТ ПЕРВЫМ
+  # заявить контейнер себе — и тут же падает на том же самом отсутствующем
+  # overlayfs/layerdb/mounts (см. выше), так что containerd-обработчик до
+  # этих контейнеров просто не дотягивается. Убрали и /var/lib/docker
+  # (лишний — /rootfs уже покрывает то же самое, а докеровскому обработчику
+  # он был нужен только для чтения layerdb, которого при
+  # containerd-snapshotter не существует), и явно направили -docker на
+  # заведомо несуществующий сокет — тогда докеровский обработчик у cAdvisor
+  # не РЕГИСТРИРУЕТСЯ вовсе (штатный для cAdvisor путь — то же самое, что на
+  # хосте вообще без Docker), и containerd-обработчик остаётся единственным
+  # претендентом. Проверено на этом стенде — container_cpu_usage_seconds_total
+  # снова заполнен, с image=<настоящий образ>, name=<container id> (см.
+  # комментарий у панелей "Контейнеры" в wallet-overview.json, почему
+  # легенда по image, не по name).
+  # Проверить: curl http://localhost:18080/metrics | grep container_cpu —
+  # если снова пусто, второй фолбэк (после containerd-namespace) — "Хост"
+  # ниже (node-exporter), он видит хост целиком, не по контейнерам.
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    restart: unless-stopped
+    privileged: true
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+    command:
+      - --docker_only=false
+      - --housekeeping_interval=10s
+      - --containerd=/run/containerd/containerd.sock
+      - --containerd-namespace=moby
+      # Несуществующий путь — намеренно, см. UPDATE выше: не даёт
+      # докеровскому обработчику зарегистрироваться и перехватить
+      # контейнеры раньше containerd-обработчика.
+      - --docker=unix:///nonexistent/docker.sock
+    ports:
+      - "18080:8080" # http://localhost:18080 — своя мини-веб-морда cAdvisor, удобно для проверки живьём
+    networks:
+      - wallet-net
+
+  # CPU/RAM/сеть ПО ХОСТУ — здесь "хост" это сам Linux-хост, физически общий
+  # для ВСЕХ контейнеров этого стенда (тот же факт, на котором строится
+  # fluent-bit в infra/logging/compose.yaml — общий journal этого же хоста).
+  # В отличие от cadvisor выше, читает /proc, /sys напрямую, поэтому надёжный
+  # фолбэк, если разбивка по контейнерам недоступна.
+  node-exporter:
+    image: docker.io/prom/node-exporter:v1.8.2
+    restart: unless-stopped
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --path.rootfs=/rootfs
+      - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)
+    ports:
+      - "19100:9100"
+    networks:
+      - wallet-net
+
+  # DB connections/DB latency — роль MONITORING_POSTGRES_* (см. init-db.sh,
+  # "Три роли" в infra/db/README.md — эта роль в их число намеренно не входит:
+  # только pg_monitor, ни строки доступа к данным таблиц). --auto-discover-
+  # databases обходит все базы кластера кроме template0/template1 одним
+  # процессом (см. GRANT CONNECT в init-db.sh — auth+wallet), поэтому в
+  # DATA_SOURCE_NAME ниже указана maintenance-база "postgres" только как
+  # ТОЧКА ВХОДА для обхода, не единственная, которую он видит.
+  # --collector.stat_statements — метрики из pg_stat_statements (см. CREATE
+  # EXTENSION в init-db.sh и shared_preload_libraries у "db" в
+  # wallet-infra/compose.yaml) — на них держится панель "Средняя латентность
+  # запроса" в дашборде Grafana.
+  # --extend.query-path — custom-запрос locks_waiting (см.
+  # postgres-exporter/queries.yaml): встроенный коллектор "locks" не
+  # различает granted/не granted, а для панели "Perf History"
+  # (test_result.avg_pg_lock_waits, см. record_run.sh) нужны именно
+  # ожидающие блокировки.
+  #
+  # depends_on на db нет — между compose-проектами он не работает; до
+  # старта db экспортёр просто отдаёт pg_up 0 и подключается сам на
+  # следующем скрейпе.
+  postgres-exporter:
+    image: docker.io/prometheuscommunity/postgres-exporter:v0.15.0
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: postgresql://${MONITORING_POSTGRES_USER}:${MONITORING_POSTGRES_PASSWORD}@db:5432/${MIGRATOR_POSTGRES_DB}?sslmode=disable
+    volumes:
+      - ./postgres-exporter/queries.yaml:/etc/postgres_exporter/queries.yaml:ro
+    command:
+      - --auto-discover-databases
+      - --exclude-databases=template0,template1
+      - --collector.stat_statements
+      - --extend.query-path=/etc/postgres_exporter/queries.yaml
+    ports:
+      - "19187:9187"
+    networks:
+      - wallet-net
+
+  # Активные access/refresh-токены google-auth — база "redis" из
+  # wallet-infra/compose.yaml, метрики (connected_clients, memory_used_bytes,
+  # commands_processed_total и т.п.). Без depends_on — см. postgres-exporter.
+  redis-exporter:
+    image: docker.io/oliver006/redis_exporter:v1.62.0
+    restart: unless-stopped
+    environment:
+      REDIS_ADDR: redis://redis:6379
+    ports:
+      - "19121:9121"
+    networks:
+      - wallet-net
+
+  # Собирает всё (сам себя + cadvisor/node-exporter/postgres-exporter/
+  # redis-exporter/HTTP-сервисы проекта) — источники и интервал см.
+  # prometheus.yml. Без правил алертинга (см. комментарий в самом
+  # prometheus.yml) — это стенд для оперативного анализа человеком через
+  # Grafana ниже, не автоматика с пейджингом.
+  prometheus:
+    image: docker.io/prom/prometheus:v2.53.0
+    restart: unless-stopped
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "19090:9090" # http://localhost:19090 — PromQL-консоль самого Prometheus, страница /targets — какие скрейпы живы
+    networks:
+      - wallet-net
+
+  # Дашборд "Wallet Transactions — Overview" (см.
+  # grafana/dashboards/wallet-overview.json) — CPU/RAM/RPS/latency p50-p99/
+  # DB connections/DB latency/сеть/errors одним экраном. Источник данных и
+  # сам дашборд заводятся сами при старте контейнера (см.
+  # grafana/provisioning/) — руками добавлять ничего не нужно. admin/admin —
+  # дефолтный логин ТОЛЬКО для локальной разработки, смените пароль при
+  # первом входе (или переопределите GF_SECURITY_ADMIN_PASSWORD здесь же для
+  # стенда с реальными данными).
+  grafana:
+    image: docker.io/grafana/grafana:11.1.0
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards/files:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    ports:
+      - "13000:3000" # открывать в браузере: http://localhost:13000 (admin/admin)
+    networks:
+      - wallet-net
+
+networks:
+  wallet-net:
+    external: true
+
+volumes:
+  # Явные имена — тома достались от времён, когда метрики жили в общем
+  # проекте "servers"; так история Prometheus и настройки Grafana переехали
+  # вместе со стеком.
+  prometheus-data:
+    name: servers_prometheus-data
+  grafana-data:
+    name: servers_grafana-data

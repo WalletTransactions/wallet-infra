@@ -1,0 +1,123 @@
+{
+  "title": "Perf History — Baseline vs Current",
+  "uid": "perf-history",
+  "editable": false,
+  "timezone": "browser",
+  "time": { "from": "now-90d", "to": "now" },
+  "schemaVersion": 39,
+  "version": 1,
+  "tags": ["wallet-transactions", "perf"],
+  "templating": {
+    "list": [
+      { "name": "scenario", "type": "query", "datasource": { "type": "postgres", "uid": "perf-history" },
+        "query": "SELECT DISTINCT scenario FROM test_run ORDER BY 1", "refresh": 1, "sort": 1, "includeAll": false, "multi": false },
+      { "name": "baseline_branch", "type": "query", "datasource": { "type": "postgres", "uid": "perf-history" },
+        "query": "SELECT DISTINCT branch FROM test_run ORDER BY 1", "refresh": 1, "sort": 1, "includeAll": false, "multi": false,
+        "label": "Baseline" },
+      { "name": "current_branch", "type": "query", "datasource": { "type": "postgres", "uid": "perf-history" },
+        "query": "SELECT DISTINCT branch FROM test_run ORDER BY 1", "refresh": 1, "sort": 1, "includeAll": false, "multi": false,
+        "label": "Current" },
+      { "name": "clients", "type": "query", "datasource": { "type": "postgres", "uid": "perf-history" },
+        "query": "SELECT DISTINCT clients FROM test_result ORDER BY 1", "refresh": 1, "sort": 3, "includeAll": false, "multi": false,
+        "label": "Уровень concurrency (для панелей ниже)" }
+    ]
+  },
+  "panels": [
+    { "id": 1, "type": "row",
+      "title": "Baseline ($baseline_branch) vs Current ($current_branch), сценарий $scenario, clients=$clients — берётся ПОСЛЕДНИЙ записанный прогон каждой ветки (см. record_run.sh)",
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 1 }, "collapsed": false, "panels": [] },
+
+    { "id": 2, "type": "table", "title": "Baseline vs Current — по метрикам",
+      "description": "Один прогон на ветку (последний по ts), уровень concurrency = $clients. degradation_pct > 0 — хуже baseline, независимо от того, что именно измеряет строка (для RPS уже инвертировано: падение throughput тоже даёт положительный % деградации, тот же принцип, что item 6 в исходном запросе).",
+      "gridPos": { "x": 0, "y": 1, "w": 14, "h": 9 },
+      "datasource": { "type": "postgres", "uid": "perf-history" },
+      "fieldConfig": { "defaults": { "custom": { "align": "right", "cellOptions": { "type": "auto" } } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "metric" }, "properties": [ { "id": "custom.align", "value": "left" } ] },
+          { "matcher": { "id": "byName", "options": "degradation_pct" }, "properties": [
+              { "id": "custom.cellOptions", "value": { "type": "color-background" } },
+              { "id": "thresholds", "value": { "mode": "absolute", "steps": [
+                  { "color": "green", "value": null }, { "color": "yellow", "value": 0 }, { "color": "red", "value": 20 } ] } },
+              { "id": "unit", "value": "percent" }
+          ] }
+        ] },
+      "targets": [ { "datasource": { "type": "postgres", "uid": "perf-history" }, "format": "table", "rawSql":
+        "WITH baseline_run AS (SELECT id FROM test_run WHERE branch = '$baseline_branch' AND scenario = '$scenario' ORDER BY ts DESC LIMIT 1),\n     current_run  AS (SELECT id FROM test_run WHERE branch = '$current_branch'  AND scenario = '$scenario' ORDER BY ts DESC LIMIT 1),\n     b AS (SELECT * FROM test_result WHERE test_run_id = (SELECT id FROM baseline_run) AND clients = $clients),\n     c AS (SELECT * FROM test_result WHERE test_run_id = (SELECT id FROM current_run)  AND clients = $clients),\n     metrics(metric, baseline, current, lower_is_better) AS (\n       VALUES\n         ('p50 latency, мс', (SELECT p50_ms FROM b), (SELECT p50_ms FROM c), true),\n         ('p90 latency, мс', (SELECT p90_ms FROM b), (SELECT p90_ms FROM c), true),\n         ('p95 latency, мс', (SELECT p95_ms FROM b), (SELECT p95_ms FROM c), true),\n         ('p99 latency, мс', (SELECT p99_ms FROM b), (SELECT p99_ms FROM c), true),\n         ('RPS', (SELECT rps FROM b), (SELECT rps FROM c), false),\n         ('Error rate, %', (SELECT error_rate * 100 FROM b), (SELECT error_rate * 100 FROM c), true),\n         ('CPU, %', (SELECT avg_cpu_pct FROM b), (SELECT avg_cpu_pct FROM c), true),\n         ('Memory, MB', (SELECT avg_mem_bytes / 1048576.0 FROM b), (SELECT avg_mem_bytes / 1048576.0 FROM c), true),\n         ('DB active conns (reports_pool)', (SELECT avg_pg_active_conns FROM b), (SELECT avg_pg_active_conns FROM c), true),\n         ('DB cache hit, %', (SELECT avg_pg_cache_hit_pct FROM b), (SELECT avg_pg_cache_hit_pct FROM c), false),\n         ('DB lock waits', (SELECT avg_pg_lock_waits FROM b), (SELECT avg_pg_lock_waits FROM c), true)\n     )\nSELECT\n  metric,\n  round(baseline::numeric, 2) AS baseline,\n  round(current::numeric, 2) AS current,\n  CASE WHEN baseline IS NULL OR baseline = 0 OR current IS NULL THEN NULL\n       WHEN lower_is_better THEN round(((current - baseline) / baseline * 100)::numeric, 1)\n       ELSE round(((baseline - current) / baseline * 100)::numeric, 1)\n  END AS degradation_pct\nFROM metrics;" } ] },
+
+    { "id": 3, "type": "gauge", "title": "Performance Score",
+      "description": "Эвристическая сводка (100 − среднее по 5 компонентам деградации, каждый обрезан до [0,100]) — см. комментарий в самом запросе. НЕ замена реальным метрикам слева, только ориентир \"в целом лучше/хуже\".",
+      "gridPos": { "x": 14, "y": 1, "w": 5, "h": 9 },
+      "datasource": { "type": "postgres", "uid": "perf-history" },
+      "fieldConfig": { "defaults": { "unit": "none", "min": 0, "max": 100,
+        "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "yellow", "value": 50 }, { "color": "green", "value": 80 } ] } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "postgres", "uid": "perf-history" }, "format": "table", "rawSql":
+        "WITH baseline_run AS (SELECT id FROM test_run WHERE branch = '$baseline_branch' AND scenario = '$scenario' ORDER BY ts DESC LIMIT 1),\n     current_run  AS (SELECT id FROM test_run WHERE branch = '$current_branch'  AND scenario = '$scenario' ORDER BY ts DESC LIMIT 1),\n     b AS (SELECT * FROM test_result WHERE test_run_id = (SELECT id FROM baseline_run) AND clients = $clients),\n     c AS (SELECT * FROM test_result WHERE test_run_id = (SELECT id FROM current_run)  AND clients = $clients),\n     comps AS (\n       SELECT\n         LEAST(GREATEST(CASE WHEN b.p95_ms IS NULL OR b.p95_ms = 0 THEN 0 ELSE (c.p95_ms - b.p95_ms) / b.p95_ms * 100 END, 0), 100) AS c1,\n         LEAST(GREATEST(CASE WHEN b.rps IS NULL OR b.rps = 0 THEN 0 ELSE (b.rps - c.rps) / b.rps * 100 END, 0), 100) AS c2,\n         LEAST(GREATEST(CASE WHEN b.error_rate = 0 AND c.error_rate = 0 THEN 0 WHEN b.error_rate = 0 THEN 100 ELSE (c.error_rate - b.error_rate) / b.error_rate * 100 END, 0), 100) AS c3,\n         LEAST(GREATEST(CASE WHEN b.avg_cpu_pct IS NULL OR b.avg_cpu_pct = 0 THEN 0 ELSE (c.avg_cpu_pct - b.avg_cpu_pct) / b.avg_cpu_pct * 100 END, 0), 100) AS c4,\n         LEAST(GREATEST(CASE WHEN b.avg_mem_bytes IS NULL OR b.avg_mem_bytes = 0 THEN 0 ELSE (c.avg_mem_bytes - b.avg_mem_bytes)::numeric / b.avg_mem_bytes * 100 END, 0), 100) AS c5\n       FROM b, c\n     )\nSELECT GREATEST(0, round((100 - (c1 + c2 + c3 + c4 + c5) / 5.0)::numeric, 0)) AS score FROM comps;" } ] },
+
+    { "id": 4, "type": "stat", "title": "Latency",
+      "gridPos": { "x": 19, "y": 1, "w": 5, "h": 3 },
+      "datasource": { "type": "postgres", "uid": "perf-history" },
+      "fieldConfig": { "defaults": { "unit": "percent", "noValue": "н/д",
+        "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 0 }, { "color": "red", "value": 20 } ] } }, "overrides": [] },
+      "options": { "colorMode": "background", "graphMode": "none", "textMode": "value" },
+      "targets": [ { "datasource": { "type": "postgres", "uid": "perf-history" }, "format": "table", "rawSql":
+        "WITH baseline_run AS (SELECT id FROM test_run WHERE branch = '$baseline_branch' AND scenario = '$scenario' ORDER BY ts DESC LIMIT 1),\n     current_run  AS (SELECT id FROM test_run WHERE branch = '$current_branch'  AND scenario = '$scenario' ORDER BY ts DESC LIMIT 1),\n     b AS (SELECT * FROM test_result WHERE test_run_id = (SELECT id FROM baseline_run) AND clients = $clients),\n     c AS (SELECT * FROM test_result WHERE test_run_id = (SELECT id FROM current_run)  AND clients = $clients)\nSELECT round((CASE WHEN b.p95_ms IS NULL OR b.p95_ms = 0 THEN 0 ELSE (c.p95_ms - b.p95_ms) / b.p95_ms * 100 END)::numeric, 1) AS \"Latency\" FROM b, c;" } ] },
+
+    { "id": 5, "type": "stat", "title": "Throughput",
+      "gridPos": { "x": 19, "y": 4, "w": 5, "h": 3 },
+      "datasource": { "type": "postgres", "uid": "perf-history" },
+      "fieldConfig": { "defaults": { "unit": "percent", "noValue": "н/д",
+        "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 0 }, { "color": "red", "value": 20 } ] } }, "overrides": [] },
+      "options": { "colorMode": "background", "graphMode": "none", "textMode": "value" },
+      "targets": [ { "datasource": { "type": "postgres", "uid": "perf-history" }, "format": "table", "rawSql":
+        "WITH baseline_run AS (SELECT id FROM test_run WHERE branch = '$baseline_branch' AND scenario = '$scenario' ORDER BY ts DESC LIMIT 1),\n     current_run  AS (SELECT id FROM test_run WHERE branch = '$current_branch'  AND scenario = '$scenario' ORDER BY ts DESC LIMIT 1),\n     b AS (SELECT * FROM test_result WHERE test_run_id = (SELECT id FROM baseline_run) AND clients = $clients),\n     c AS (SELECT * FROM test_result WHERE test_run_id = (SELECT id FROM current_run)  AND clients = $clients)\nSELECT round((CASE WHEN b.rps IS NULL OR b.rps = 0 THEN 0 ELSE (b.rps - c.rps) / b.rps * 100 END)::numeric, 1) AS \"Throughput\" FROM b, c;" } ] },
+
+    { "id": 6, "type": "stat", "title": "Errors",
+      "gridPos": { "x": 19, "y": 7, "w": 5, "h": 3 },
+      "datasource": { "type": "postgres", "uid": "perf-history" },
+      "fieldConfig": { "defaults": { "unit": "percent", "noValue": "н/д",
+        "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 0 }, { "color": "red", "value": 20 } ] } }, "overrides": [] },
+      "options": { "colorMode": "background", "graphMode": "none", "textMode": "value" },
+      "targets": [ { "datasource": { "type": "postgres", "uid": "perf-history" }, "format": "table", "rawSql":
+        "WITH baseline_run AS (SELECT id FROM test_run WHERE branch = '$baseline_branch' AND scenario = '$scenario' ORDER BY ts DESC LIMIT 1),\n     current_run  AS (SELECT id FROM test_run WHERE branch = '$current_branch'  AND scenario = '$scenario' ORDER BY ts DESC LIMIT 1),\n     b AS (SELECT * FROM test_result WHERE test_run_id = (SELECT id FROM baseline_run) AND clients = $clients),\n     c AS (SELECT * FROM test_result WHERE test_run_id = (SELECT id FROM current_run)  AND clients = $clients)\nSELECT round((CASE WHEN b.error_rate = 0 AND c.error_rate = 0 THEN 0 WHEN b.error_rate = 0 THEN 100 ELSE (c.error_rate - b.error_rate) / b.error_rate * 100 END)::numeric, 1) AS \"Errors\" FROM b, c;" } ] },
+
+    { "id": 7, "type": "row", "title": "Sweep — latency/degradation по числу клиентов ($scenario)",
+      "gridPos": { "x": 0, "y": 10, "w": 24, "h": 1 }, "collapsed": false, "panels": [] },
+
+    { "id": 8, "type": "barchart", "title": "p95 latency: baseline vs current",
+      "description": "По одной группе столбцов на уровень concurrency — baseline (последний прогон $baseline_branch) и current (последний прогон $current_branch), сценарий $scenario. Числа те же, что и в таблице ниже.",
+      "gridPos": { "x": 0, "y": 11, "w": 12, "h": 9 },
+      "datasource": { "type": "postgres", "uid": "perf-history" },
+      "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] },
+      "options": { "xField": "clients", "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [ { "datasource": { "type": "postgres", "uid": "perf-history" }, "format": "table", "rawSql":
+        "WITH baseline_run AS (SELECT id FROM test_run WHERE branch = '$baseline_branch' AND scenario = '$scenario' ORDER BY ts DESC LIMIT 1),\n     current_run  AS (SELECT id FROM test_run WHERE branch = '$current_branch'  AND scenario = '$scenario' ORDER BY ts DESC LIMIT 1),\n     b AS (SELECT * FROM test_result WHERE test_run_id = (SELECT id FROM baseline_run)),\n     c AS (SELECT * FROM test_result WHERE test_run_id = (SELECT id FROM current_run))\nSELECT COALESCE(b.clients, c.clients) AS clients, b.p95_ms AS baseline, c.p95_ms AS current\nFROM b FULL OUTER JOIN c ON b.clients = c.clients\nORDER BY clients;" } ] },
+
+    { "id": 9, "type": "barchart", "title": "Degradation, % (p95, current относительно baseline)",
+      "description": "degradation = (current_p95 - baseline_p95) / baseline_p95 * 100 — положительное = хуже baseline (см. item 6 исходного запроса).",
+      "gridPos": { "x": 12, "y": 11, "w": 12, "h": 9 },
+      "datasource": { "type": "postgres", "uid": "perf-history" },
+      "fieldConfig": { "defaults": { "unit": "percent",
+        "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 0 }, { "color": "red", "value": 20 } ] },
+        "custom": { "gradientMode": "scheme" } }, "overrides": [] },
+      "options": { "xField": "clients", "legend": { "displayMode": "none" }, "colorByField": "degradation_pct" },
+      "targets": [ { "datasource": { "type": "postgres", "uid": "perf-history" }, "format": "table", "rawSql":
+        "WITH baseline_run AS (SELECT id FROM test_run WHERE branch = '$baseline_branch' AND scenario = '$scenario' ORDER BY ts DESC LIMIT 1),\n     current_run  AS (SELECT id FROM test_run WHERE branch = '$current_branch'  AND scenario = '$scenario' ORDER BY ts DESC LIMIT 1),\n     b AS (SELECT * FROM test_result WHERE test_run_id = (SELECT id FROM baseline_run)),\n     c AS (SELECT * FROM test_result WHERE test_run_id = (SELECT id FROM current_run))\nSELECT COALESCE(b.clients, c.clients) AS clients,\n       CASE WHEN b.p95_ms IS NULL OR b.p95_ms = 0 OR c.p95_ms IS NULL THEN NULL\n            ELSE round(((c.p95_ms - b.p95_ms) / b.p95_ms * 100)::numeric, 1) END AS degradation_pct\nFROM b FULL OUTER JOIN c ON b.clients = c.clients\nORDER BY clients;" } ] },
+
+    { "id": 10, "type": "table", "title": "Sweep — таблица (все метрики, все уровни)",
+      "description": "То же, что два графика выше, но числами и по всем метрикам сразу — если barchart не отрисуется как ожидается (панель довольно новая в версии Grafana), эта таблица — надёжный фолбэк с теми же данными.",
+      "gridPos": { "x": 0, "y": 20, "w": 24, "h": 8 },
+      "datasource": { "type": "postgres", "uid": "perf-history" },
+      "targets": [ { "datasource": { "type": "postgres", "uid": "perf-history" }, "format": "table", "rawSql":
+        "WITH baseline_run AS (SELECT id FROM test_run WHERE branch = '$baseline_branch' AND scenario = '$scenario' ORDER BY ts DESC LIMIT 1),\n     current_run  AS (SELECT id FROM test_run WHERE branch = '$current_branch'  AND scenario = '$scenario' ORDER BY ts DESC LIMIT 1),\n     b AS (SELECT * FROM test_result WHERE test_run_id = (SELECT id FROM baseline_run)),\n     c AS (SELECT * FROM test_result WHERE test_run_id = (SELECT id FROM current_run))\nSELECT COALESCE(b.clients, c.clients) AS clients,\n       b.p95_ms AS baseline_p95, c.p95_ms AS current_p95,\n       b.rps AS baseline_rps, c.rps AS current_rps,\n       round((b.error_rate * 100)::numeric, 3) AS baseline_err_pct, round((c.error_rate * 100)::numeric, 3) AS current_err_pct\nFROM b FULL OUTER JOIN c ON b.clients = c.clients\nORDER BY clients;" } ] },
+
+    { "id": 11, "type": "row", "title": "История прогонов ($scenario)",
+      "gridPos": { "x": 0, "y": 28, "w": 24, "h": 1 }, "collapsed": false, "panels": [] },
+
+    { "id": 12, "type": "table", "title": "Все записанные прогоны",
+      "description": "Плоский список — commit/branch/clients/p95/RPS/errors по всем прогонам сценария $scenario, самые новые сверху (см. item 3 исходного запроса).",
+      "gridPos": { "x": 0, "y": 29, "w": 24, "h": 10 },
+      "datasource": { "type": "postgres", "uid": "perf-history" },
+      "targets": [ { "datasource": { "type": "postgres", "uid": "perf-history" }, "format": "table", "rawSql":
+        "SELECT tr.ts AS \"time\", tr.commit_sha, tr.branch, tres.clients,\n       tres.p95_ms, tres.rps, round((tres.error_rate * 100)::numeric, 3) AS error_pct,\n       tres.avg_cpu_pct, round((tres.avg_mem_bytes / 1048576.0)::numeric, 1) AS avg_mem_mb,\n       tres.avg_pg_active_conns, round(tres.avg_pg_cache_hit_pct::numeric, 1) AS avg_pg_cache_hit_pct, tres.avg_pg_lock_waits\nFROM test_result tres\nJOIN test_run tr ON tr.id = tres.test_run_id\nWHERE tr.scenario = '$scenario'\nORDER BY tr.ts DESC, tres.clients ASC\nLIMIT 200;" } ] }
+  ]
+}

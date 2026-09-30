@@ -1,0 +1,51 @@
+# Разовая настройка источника данных Grafana при старте контейнера (см.
+# volumes у сервиса "grafana" в compose.yaml) — тот же приём, что
+# dashboards-init делает для OpenSearch Dashboards руками через curl, но
+# Grafana умеет провижининг из файла сама, без отдельного init-контейнера.
+#
+# isDefault — единственный ИЗ ДВУХ источников с этим флагом, только у
+# Prometheus (панели дашборда wallet-overview.json не указывают datasource
+# явно нигде, кроме uid — полагаются на дефолтный); perf-history.json ниже
+# всюду ссылается на свой источник по uid явно, поэтому isDefault ему не
+# нужен.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    # uid фиксирован (не автогенерируется) — дашборды в ../dashboards/*.json
+    # ссылаются на него этой же строкой в каждой панели; автогенерируемый uid
+    # был бы другим при пересоздании источника и рассинхронизировал бы их.
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+
+  # История прогонов нагрузочного контура (test_run/test_result, см.
+  # infra/db/migrations/perf/) — читается ролью perf_reader (SELECT-only,
+  # заводится самой миграцией perf, не init-db.sh — см. её комментарий).
+  # "postgres" — встроенный тип датасорса Grafana (core-плагин, ничего
+  # доустанавливать не нужно). database — своя, отдельная от auth/wallet, но
+  # тот же инстанс Postgres (контейнер "db"), что и у остальных ролей.
+  - name: Perf History
+    uid: perf-history
+    type: postgres
+    url: db:5432
+    database: perf_history
+    user: perf_reader
+    jsonData:
+      sslmode: disable
+      # 1600 = Postgres 16.x (см. postgres:16-alpine у "db" в wallet-infra/compose.yaml) —
+      # влияет только на то, какой диалект SQL-автодополнения/фич Grafana
+      # предполагает, не на сам протокол подключения.
+      postgresVersion: 1600
+      timescaledb: false
+    secureJsonData:
+      # Пароль в репозитории — тот же осознанный компромисс, что и у
+      # wallet_reader (wallet-api/schema/role/wallet_reader.sql): роль умеет
+      # только SELECT, секрета в привычном смысле тут нет. Для стенда с
+      # реальными данными меняется вместе с паролем самой роли (см.
+      # ALTER ROLE в infra/db/migrations/perf/000001_init.up.sql).
+      password: perf_reader
+    editable: false

@@ -1,0 +1,105 @@
+@startuml wallet-telegram-link-sequence
+title WalletTransaction — подключение и отключение Telegram-бота
+
+skinparam sequenceMessageAlign left
+skinparam wrapWidth 260
+
+actor "Пользователь" as U
+participant "Браузер\n(wallet-web, app.js)" as WEB
+participant "wallet-gateway" as GW
+participant "google-auth" as AUTH
+database "Redis" as REDIS
+database "auth-база\n(telegram_links)" as AUTHDB
+participant "Telegram\n(приложение + Bot API)" as TG
+participant "wallet-telegram" as BOT
+database "wallet_telegram\n(tg_link — настройки)" as TGDB
+
+== 1. Выдача одноразовой ссылки (веб, пользователь уже вошёл) ==
+
+U -> WEB : Доступ и приглашения → Telegram-бот → «Подключить Telegram»
+WEB -> GW : POST /auth/telegram/link-code\n(cookie session)
+GW -> AUTH : проксирует /auth/* как есть
+AUTH -> AUTH : authenticate() → user_id (aud google-auth, scope account)\ncode = base64url(24 случайных байта)
+AUTH -> REDIS : SET tg_link_code:<sha256(code)> = user_id\nEX 600
+AUTH --> WEB : 200 {code, deep_link: t.me/WalletTransaction_bot?start=<code>,\nexpires_in: 600}
+note right of AUTH
+  503 — TELEGRAM_BOT_USERNAME не задан:
+  веб пишет «бот на сервере ещё не настроен».
+end note
+WEB -> WEB : кнопка «Открыть в Telegram» + QR-код\n(vendor/qrcode-generator), «действует до HH:MM»
+loop каждые 3 с, пока ссылка жива
+  WEB -> GW : GET /auth/telegram/links
+  GW -> AUTH
+  AUTH --> WEB : links[] — ждём НОВУЮ пару (tg_user_id, created_at)
+end
+
+== 2. Обмен кода на связку (Telegram → бот → google-auth) ==
+
+U -> TG : сканирует QR / открывает ссылку → «Запустить»
+TG -> TG : хранит апдейт «/start <code>»\n(до 24 ч, пока бот не подтвердит)
+BOT -> TG : getUpdates(offset)
+TG --> BOT : update {message: "/start <code>", from.id, chat.type=private}
+BOT -> BOT : только private-чат, allowlist,\nlooks_like_link_code(code)
+BOT -> AUTH : POST /internal/telegram/exchange\nX-Service-Secret\n{code, tg_user_id, tg_username}
+note right of BOT
+  Напрямую google-auth:8080 —
+  гейтвей /internal/* не маршрутизирует.
+end note
+AUTH -> REDIS : GETDEL tg_link_code:<sha256(code)>
+alt код истёк или уже использован
+  AUTH --> BOT : 410
+  BOT -> TG : sendMessage «код устарел, получите новый»
+else код верный
+  AUTH -> AUTH : device_id = uuid(user_id, tg_user_id)
+  AUTH -> AUTHDB : UPSERT telegram_links (tg_user_id → user_id, device_id)\n(был связан с другим пользователем — строка заменяется)
+  AUTH --> BOT : 200 {user_id, device_id}\n— никаких токенов, сессии устройства у бота нет
+  BOT -> TGDB : UPSERT tg_link — настройки (tz и кошелёк по умолчанию\nиз прежних, если тот же пользователь)
+  BOT -> TG : sendMessage «Готово, бот подключён. /help»
+end
+BOT -> TGDB : tg_update_offset = update_id + 1
+BOT -> TG : следующий getUpdates(offset) подтверждает апдейт
+
+WEB -> GW : GET /auth/telegram/links (очередной тик)
+GW -> AUTH
+AUTH --> WEB : есть новая связка
+WEB -> U : «Готово — бот подключён. Напишите ему /help»
+
+note over BOT, AUTH
+  Дальше на каждую команду бот берёт токен:
+  POST /internal/telegram/token {tg_user_id} → JWT на 5 мин,
+  aud [wallet-report, wallet-api], scope reports:read expense:write
+  (см. telegram-commands-sequence.puml).
+end note
+
+== 3. Отключение ==
+
+alt из веба: «Отключить»
+  U -> WEB : Отключить
+  WEB -> GW : DELETE /auth/telegram/links/{tg_user_id}
+  GW -> AUTH
+  AUTH -> AUTHDB : DELETE (только своя связка, иначе 404)
+  AUTH --> WEB : 204
+  note over BOT
+    Бот узнаёт при следующей команде:
+    /internal/telegram/token → 404 →
+    tg_link удаляется, ответ «бот отключён,
+    подключите заново». Уже выданный токен
+    бота живёт до exp (≤ 5 мин).
+  end note
+else из Telegram: /unlink
+  U -> TG : /unlink
+  BOT -> TG : getUpdates
+  TG --> BOT : update «/unlink»
+  BOT -> AUTH : DELETE /internal/telegram/links/{tg_user_id}\nX-Service-Secret
+  AUTH -> AUTHDB : DELETE
+  AUTH --> BOT : 204
+  BOT -> TGDB : DELETE tg_link
+  BOT -> TG : sendMessage «Бот отключён от кошелька»
+  note right of BOT
+    google-auth недоступен — связка жива,
+    бот честно отвечает «временно недоступен»
+    и ничего локально не удаляет.
+  end note
+end
+
+@enduml

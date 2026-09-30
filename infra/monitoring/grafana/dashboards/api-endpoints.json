@@ -1,0 +1,156 @@
+{
+  "uid": "api-endpoints",
+  "title": "API — детализация по ручкам",
+  "tags": ["wallet-transactions", "api"],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "time": { "from": "now-6h", "to": "now" },
+  "refresh": "30s",
+  "templating": {
+    "list": [
+      {
+        "name": "service",
+        "label": "Сервис",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": { "query": "label_values(http_requests_total, job)", "refId": "service" },
+        "refresh": 2,
+        "sort": 1,
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": true,
+        "current": { "text": "All", "value": ["$__all"] }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Сводка по ручкам — количество, латентность, ошибки (текущий диапазон дашборда)",
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 1 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 2,
+      "type": "table",
+      "title": "Все ручки — сводная таблица",
+      "description": "Одна строка на (сервис, метод, ручка). Requests/Errors — increase() за выбранный диапазон дашборда ($__range); RPS/avg/p50/p90/p95/p99 — rate() за тот же диапазон (не тренд по времени, а среднее по нему — для тренда см. панели ниже). avg/p50/p90/p95/p99 в мс (histogram_quantile по http_request_duration_seconds_bucket, см. src/util/metrics.hpp каждого сервиса). Error % — доля запросов с статусом 4xx/5xx.",
+      "gridPos": { "x": 0, "y": 1, "w": 24, "h": 14 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "custom": { "align": "auto", "cellOptions": { "type": "auto" } } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Requests" }, "properties": [{ "id": "unit", "value": "short" }, { "id": "custom.width", "value": 110 }] },
+          { "matcher": { "id": "byName", "options": "RPS" }, "properties": [{ "id": "unit", "value": "reqps" }, { "id": "custom.width", "value": 100 }] },
+          { "matcher": { "id": "byName", "options": "avg ms" }, "properties": [{ "id": "unit", "value": "ms" }, { "id": "custom.width", "value": 100 }] },
+          { "matcher": { "id": "byName", "options": "p50 ms" }, "properties": [{ "id": "unit", "value": "ms" }, { "id": "custom.width", "value": 100 }] },
+          { "matcher": { "id": "byName", "options": "p90 ms" }, "properties": [{ "id": "unit", "value": "ms" }, { "id": "custom.width", "value": 100 }] },
+          { "matcher": { "id": "byName", "options": "p95 ms" }, "properties": [{ "id": "unit", "value": "ms" }, { "id": "custom.width", "value": 100 }, { "id": "custom.cellOptions", "value": { "type": "color-background", "mode": "gradient" } }] },
+          { "matcher": { "id": "byName", "options": "p99 ms" }, "properties": [{ "id": "unit", "value": "ms" }, { "id": "custom.width", "value": 100 }] },
+          { "matcher": { "id": "byName", "options": "Errors" }, "properties": [{ "id": "unit", "value": "short" }, { "id": "custom.width", "value": 90 }] },
+          { "matcher": { "id": "byName", "options": "Error %" }, "properties": [{ "id": "unit", "value": "percent" }, { "id": "custom.width", "value": 90 }, { "id": "custom.cellOptions", "value": { "type": "color-background", "mode": "gradient" } }, { "id": "thresholds", "value": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 5 }] } }] },
+          { "matcher": { "id": "byName", "options": "job" }, "properties": [{ "id": "displayName", "value": "Сервис" }] },
+          { "matcher": { "id": "byName", "options": "method" }, "properties": [{ "id": "displayName", "value": "Метод" }] },
+          { "matcher": { "id": "byName", "options": "route" }, "properties": [{ "id": "displayName", "value": "Ручка" }] }
+        ]
+      },
+      "transformations": [
+        { "id": "merge", "options": {} },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "Time": true },
+            "indexByName": {
+              "job": 0, "method": 1, "route": 2,
+              "Value #A": 3, "Value #B": 4, "Value #C": 5,
+              "Value #D": 6, "Value #E": 7, "Value #F": 8, "Value #G": 9,
+              "Value #H": 10, "Value #I": 11
+            },
+            "renameByName": {
+              "Value #A": "Requests",
+              "Value #B": "RPS",
+              "Value #C": "avg ms",
+              "Value #D": "p50 ms",
+              "Value #E": "p90 ms",
+              "Value #F": "p95 ms",
+              "Value #G": "p99 ms",
+              "Value #H": "Errors",
+              "Value #I": "Error %"
+            }
+          }
+        },
+        { "id": "sortBy", "options": { "fields": {}, "sort": [{ "field": "p95 ms", "desc": true }] } }
+      ],
+      "targets": [
+        { "refId": "A", "format": "table", "instant": true, "expr": "sum by (job, method, route) (increase(http_requests_total{job=~\"$service\"}[$__range]))" },
+        { "refId": "B", "format": "table", "instant": true, "expr": "sum by (job, method, route) (rate(http_requests_total{job=~\"$service\"}[$__range]))" },
+        { "refId": "C", "format": "table", "instant": true, "expr": "(sum by (job, method, route) (rate(http_request_duration_seconds_sum{job=~\"$service\"}[$__range])) / sum by (job, method, route) (rate(http_request_duration_seconds_count{job=~\"$service\"}[$__range]))) * 1000" },
+        { "refId": "D", "format": "table", "instant": true, "expr": "histogram_quantile(0.50, sum by (le, job, method, route) (rate(http_request_duration_seconds_bucket{job=~\"$service\"}[$__range]))) * 1000" },
+        { "refId": "E", "format": "table", "instant": true, "expr": "histogram_quantile(0.90, sum by (le, job, method, route) (rate(http_request_duration_seconds_bucket{job=~\"$service\"}[$__range]))) * 1000" },
+        { "refId": "F", "format": "table", "instant": true, "expr": "histogram_quantile(0.95, sum by (le, job, method, route) (rate(http_request_duration_seconds_bucket{job=~\"$service\"}[$__range]))) * 1000" },
+        { "refId": "G", "format": "table", "instant": true, "expr": "histogram_quantile(0.99, sum by (le, job, method, route) (rate(http_request_duration_seconds_bucket{job=~\"$service\"}[$__range]))) * 1000" },
+        { "refId": "H", "format": "table", "instant": true, "expr": "sum by (job, method, route) (increase(http_requests_total{job=~\"$service\", status=~\"4..|5..\"}[$__range]))" },
+        { "refId": "I", "format": "table", "instant": true, "expr": "(sum by (job, method, route) (rate(http_requests_total{job=~\"$service\", status=~\"4..|5..\"}[$__range])) / sum by (job, method, route) (rate(http_requests_total{job=~\"$service\"}[$__range]))) * 100" }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "row",
+      "title": "Тренд по времени — топ ручек",
+      "gridPos": { "x": 0, "y": 15, "w": 24, "h": 1 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "RPS по ручке",
+      "description": "sum(rate(http_requests_total[$__rate_interval])) by (job, method, route)",
+      "gridPos": { "x": 0, "y": 16, "w": 12, "h": 9 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(http_requests_total{job=~\"$service\"}[$__rate_interval])) by (job, method, route)", "legendFormat": "{{job}} {{method}} {{route}}" }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Latency p95 по ручке",
+      "description": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, job, method, route))",
+      "gridPos": { "x": 12, "y": 16, "w": 12, "h": 9 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job=~\"$service\"}[5m])) by (le, job, method, route))", "legendFormat": "{{job}} {{method}} {{route}}" }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Latency p99 по ручке",
+      "description": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, job, method, route))",
+      "gridPos": { "x": 0, "y": 25, "w": 12, "h": 9 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{job=~\"$service\"}[5m])) by (le, job, method, route))", "legendFormat": "{{job}} {{method}} {{route}}" }
+      ]
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "Errors/sec по ручке (4xx/5xx)",
+      "description": "sum(rate(http_requests_total{status=~\"4..|5..\"}[$__rate_interval])) by (job, method, route)",
+      "gridPos": { "x": 12, "y": 25, "w": 12, "h": 9 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(http_requests_total{job=~\"$service\", status=~\"4..|5..\"}[$__rate_interval])) by (job, method, route)", "legendFormat": "{{job}} {{method}} {{route}}" }
+      ]
+    }
+  ]
+}

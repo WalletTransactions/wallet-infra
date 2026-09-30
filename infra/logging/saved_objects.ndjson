@@ -1,0 +1,2 @@
+{"type":"index-pattern","id":"wallet-logs","attributes":{"title":"wallet-logs*","timeFieldName":"@timestamp"},"references":[]}
+{"type":"search","id":"wallet-logs-search","attributes":{"title":"Wallet logs","columns":["container_name","message"],"sort":[["@timestamp","desc"]],"kibanaSavedObjectMeta":{"searchSourceJSON":"{\"index\":\"wallet-logs\",\"query\":{\"query\":\"\",\"language\":\"kuery\"},\"filter\":[]}"}},"references":[{"name":"kibanaSavedObjectMeta.searchSourceJSON.index","type":"index-pattern","id":"wallet-logs"}]}

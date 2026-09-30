@@ -1,0 +1,7 @@
+# Отдельный namespace, чтобы не путаться с чем-то ещё в том же локальном
+# кластере (minikube/kind/Rancher Desktop) и одной командой снести всё сразу
+# (kubectl delete ns wallet-transaction), не перечисляя ресурсы по одному.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: wallet-transaction

@@ -1,0 +1,240 @@
+{
+  "title": "Wallet Transactions — Overview",
+  "uid": "wallet-overview",
+  "editable": false,
+  "timezone": "browser",
+  "refresh": "10s",
+  "time": { "from": "now-1h", "to": "now" },
+  "schemaVersion": 39,
+  "version": 1,
+  "tags": ["wallet-transactions"],
+  "panels": [
+    { "id": 1, "type": "row", "title": "HTTP — RPS / latency / errors (google-auth, wallet-api, wallet-report, wallet-gateway)",
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 1 }, "collapsed": false, "panels": [] },
+
+    { "id": 2, "type": "timeseries", "title": "RPS по сервису",
+      "description": "sum(rate(http_requests_total[1m])) by (job) — см. src/util/metrics.hpp каждого сервиса.",
+      "gridPos": { "x": 0, "y": 1, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(http_requests_total[1m])) by (job)", "legendFormat": "{{job}}" } ] },
+
+    { "id": 3, "type": "timeseries", "title": "Errors/sec по сервису (4xx / 5xx)",
+      "description": "Отдельно клиентские (4xx) и серверные (5xx) ошибки — sum(rate(http_requests_total{status=~\"4..\"|\"5..\"}[1m])) by (job, status_class).",
+      "gridPos": { "x": 12, "y": 1, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "refId": "A", "expr": "sum(rate(http_requests_total{status=~\"5..\"}[1m])) by (job)", "legendFormat": "{{job}} 5xx" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "refId": "B", "expr": "sum(rate(http_requests_total{status=~\"4..\"}[1m])) by (job)", "legendFormat": "{{job}} 4xx" }
+      ] },
+
+    { "id": 4, "type": "timeseries", "title": "Latency p50 по сервису",
+      "description": "histogram_quantile(0.50, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, job)).",
+      "gridPos": { "x": 0, "y": 9, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.50, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, job))", "legendFormat": "{{job}}" } ] },
+
+    { "id": 5, "type": "timeseries", "title": "Latency p95 по сервису",
+      "description": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, job)).",
+      "gridPos": { "x": 8, "y": 9, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, job))", "legendFormat": "{{job}}" } ] },
+
+    { "id": 6, "type": "timeseries", "title": "Latency p99 по сервису",
+      "description": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, job)).",
+      "gridPos": { "x": 16, "y": 9, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, job))", "legendFormat": "{{job}}" } ] },
+
+    { "id": 10, "type": "row", "title": "Контейнеры — CPU / RAM / сеть (cAdvisor)",
+      "gridPos": { "x": 0, "y": 17, "w": 24, "h": 1 }, "collapsed": false, "panels": [] },
+
+    { "id": 11, "type": "timeseries", "title": "CPU по контейнеру",
+      "description": "sum(rate(container_cpu_usage_seconds_total{name=~\".+\"}[1m])) by (image) * 100 — доля ядра в процентах (100 = одно ядро занято полностью). Группировка по image, не по name: с переходом Docker на containerd-snapshotter (2026-09-16, см. cadvisor в compose.yaml) cAdvisor видит контейнеры через containerd-обработчик, а не докеровский, и name там — это raw container id, а не человекочитаемое имя.",
+      "gridPos": { "x": 0, "y": 18, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percent", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(container_cpu_usage_seconds_total{name=~\".+\"}[1m])) by (image) * 100", "legendFormat": "{{image}}" } ] },
+
+    { "id": 12, "type": "timeseries", "title": "RAM по контейнеру",
+      "description": "container_memory_usage_bytes{name=~\".+\"} — легенда по image, не по name (см. описание CPU-панели рядом, тот же довод про containerd-snapshotter).",
+      "gridPos": { "x": 12, "y": 18, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "bytes", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "container_memory_usage_bytes{name=~\".+\"}", "legendFormat": "{{image}}" } ] },
+
+    { "id": 13, "type": "timeseries", "title": "Сеть — приём, по контейнеру",
+      "description": "rate(container_network_receive_bytes_total{name=~\".+\"}[1m]) — ПУСТО на containerd-обработчике cAdvisor (проверено на исходниках google/cadvisor, ветка master, lib/container/containerd/handler.go, 2026-09-17) — и это НЕ временный баг/недоделка, чинится ТОЛЬКО сменой инструмента, не апгрейдом cAdvisor: containerd-обработчик вызывает common.RemoveNetMetrics(metrics, cntr.Labels[\"io.cri-containerd.kind\"] != \"sandbox\") — то есть сетевые метрики выпиливаются для ЛЮБОГО контейнера без CRI-лейбла \"sandbox\" (Kubernetes-специфичный лейбл pause-контейнера пода, общий netns на весь под). Обычные Docker-контейнеры (не CRI/K8s) такого лейбла не имеют и не могут иметь — значит remove=true всегда, на любой версии cAdvisor. CPU/RAM у containerd-обработчика работают нормально (см. инцидент 2026-09-16/17 и cadvisor в compose.yaml) — ограничение специфично именно для сети. Сеть хоста целиком — панель \"Сеть хоста\" ниже (node-exporter), она работает.",
+      "gridPos": { "x": 0, "y": 26, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "Bps", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "rate(container_network_receive_bytes_total{name=~\".+\"}[1m])", "legendFormat": "{{image}}" } ] },
+
+    { "id": 14, "type": "timeseries", "title": "Сеть — передача, по контейнеру",
+      "description": "rate(container_network_transmit_bytes_total{name=~\".+\"}[1m]) — то же ограничение, что у панели \"Сеть — приём\" рядом (containerd-обработчик cAdvisor намеренно выпиливает сетевые метрики для не-CRI/не-Kubernetes контейнеров, не чинится апгрейдом — см. её описание).",
+      "gridPos": { "x": 12, "y": 26, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "Bps", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "rate(container_network_transmit_bytes_total{name=~\".+\"}[1m])", "legendFormat": "{{image}}" } ] },
+
+    { "id": 20, "type": "row", "title": "Хост — podman-machine VM целиком (node-exporter)",
+      "gridPos": { "x": 0, "y": 34, "w": 24, "h": 1 }, "collapsed": false, "panels": [] },
+
+    { "id": 21, "type": "timeseries", "title": "CPU хоста",
+      "description": "100 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[1m])) * 100.",
+      "gridPos": { "x": 0, "y": 35, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100, "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "100 - (avg(rate(node_cpu_seconds_total{mode=\"idle\"}[1m])) * 100)", "legendFormat": "CPU" } ] },
+
+    { "id": 22, "type": "timeseries", "title": "RAM хоста",
+      "description": "(1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100.",
+      "gridPos": { "x": 8, "y": 35, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100, "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "(1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100", "legendFormat": "RAM" } ] },
+
+    { "id": 23, "type": "timeseries", "title": "Сеть хоста",
+      "description": "rate(node_network_receive_bytes_total{device!~\"lo\"}[1m]) / rate(node_network_transmit_bytes_total{device!~\"lo\"}[1m]), по интерфейсу.",
+      "gridPos": { "x": 16, "y": 35, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "Bps", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "refId": "A", "expr": "rate(node_network_receive_bytes_total{device!~\"lo\"}[1m])", "legendFormat": "{{device}} rx" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "refId": "B", "expr": "rate(node_network_transmit_bytes_total{device!~\"lo\"}[1m])", "legendFormat": "{{device}} tx" }
+      ] },
+
+    { "id": 30, "type": "row", "title": "Postgres — соединения / латентность запросов (postgres_exporter)",
+      "gridPos": { "x": 0, "y": 43, "w": 24, "h": 1 }, "collapsed": false, "panels": [] },
+
+    { "id": 31, "type": "timeseries", "title": "Активные соединения, по базе",
+      "description": "pg_stat_database_numbackends{datname=~\"google_auth|wallet_api\"} — см. GRANT pg_monitor в infra/db/init-db.sh.",
+      "gridPos": { "x": 0, "y": 44, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "pg_stat_database_numbackends{datname=~\"google_auth|wallet_api\"}", "legendFormat": "{{datname}}" } ] },
+
+    { "id": 32, "type": "timeseries", "title": "Средняя латентность запроса, по базе",
+      "description": "sum(rate(pg_stat_statements_seconds_total[5m])) by (datname) / sum(rate(pg_stat_statements_calls_total[5m])) by (datname). Точные имена метрик зависят от версии postgres_exporter — сверьте с `curl postgres-exporter:9187/metrics | grep pg_stat_statements` и поправьте запрос, если экспортёр называет их иначе.",
+      "gridPos": { "x": 12, "y": 44, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(pg_stat_statements_seconds_total[5m])) by (datname) / sum(rate(pg_stat_statements_calls_total[5m])) by (datname)", "legendFormat": "{{datname}}" } ] },
+
+    { "id": 33, "type": "timeseries", "title": "Postgres — CPU контейнера",
+      "description": "sum(rate(container_cpu_usage_seconds_total{image=~\".*postgres.*\"}[1m])) by (image) * 100 — CPU самого процесса postgres (см. cAdvisor выше), не то же самое, что латентность/соединения из postgres_exporter рядом.",
+      "gridPos": { "x": 0, "y": 52, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percent", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(container_cpu_usage_seconds_total{image=~\".*postgres.*\"}[1m])) by (image) * 100", "legendFormat": "{{image}}" } ] },
+
+    { "id": 34, "type": "timeseries", "title": "Postgres — RAM контейнера",
+      "description": "container_memory_usage_bytes{image=~\".*postgres.*\"}.",
+      "gridPos": { "x": 8, "y": 52, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "bytes", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "container_memory_usage_bytes{image=~\".*postgres.*\"}", "legendFormat": "{{image}}" } ] },
+
+    { "id": 35, "type": "timeseries", "title": "Postgres — IOPS (диск контейнера)",
+      "description": "Две отдельные линии — read: sum(rate(container_fs_reads_total{image=~\".*postgres.*\"}[1m])) by (image), write: та же формула с container_fs_writes_total. Операций/сек на блочное устройство контейнера целиком (не отдельно WAL/данные — cAdvisor считает по устройству, не по файлу).",
+      "gridPos": { "x": 16, "y": 52, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "iops", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "refId": "A", "expr": "sum(rate(container_fs_reads_total{image=~\".*postgres.*\"}[1m])) by (image)", "legendFormat": "{{image}} read" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "refId": "B", "expr": "sum(rate(container_fs_writes_total{image=~\".*postgres.*\"}[1m])) by (image)", "legendFormat": "{{image}} write" }
+      ] },
+
+    { "id": 40, "type": "row", "title": "Redis — токены google-auth (redis_exporter)",
+      "gridPos": { "x": 0, "y": 60, "w": 24, "h": 1 }, "collapsed": false, "panels": [] },
+
+    { "id": 41, "type": "timeseries", "title": "Подключённые клиенты",
+      "description": "redis_connected_clients.",
+      "gridPos": { "x": 0, "y": 61, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "redis_connected_clients", "legendFormat": "clients" } ] },
+
+    { "id": 42, "type": "timeseries", "title": "Используемая память",
+      "description": "redis_memory_used_bytes.",
+      "gridPos": { "x": 8, "y": 61, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "bytes", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "redis_memory_used_bytes", "legendFormat": "used" } ] },
+
+    { "id": 43, "type": "timeseries", "title": "Команды/сек",
+      "description": "rate(redis_commands_processed_total[1m]).",
+      "gridPos": { "x": 16, "y": 61, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "rate(redis_commands_processed_total[1m])", "legendFormat": "ops/sec" } ] },
+
+    { "id": 50, "type": "row", "title": "Telegram-бот — апдейты, траты, запись (wallet-telegram)",
+      "gridPos": { "x": 0, "y": 69, "w": 24, "h": 1 }, "collapsed": false, "panels": [] },
+
+    { "id": 51, "type": "timeseries", "title": "Апдейты/сек по типу",
+      "description": "sum(rate(tg_updates_total[5m])) by (type): expense — сообщение-трата, callback — нажатие кнопки, остальное — команды (см. wallet-telegram/src/bot.cpp).",
+      "gridPos": { "x": 0, "y": 70, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(tg_updates_total[5m])) by (type)", "legendFormat": "{{type}}" } ] },
+
+    { "id": 52, "type": "timeseries", "title": "Траты за час: разбор и запись",
+      "description": "increase(tg_expense_total[1h]) — итог разбора сообщения (resolved — сразу карточка, ambiguous — вопрос кнопками, rejected, parse_failed); increase(tg_expense_save_total[1h]) — исход «✓ Записать» (saved, unavailable, lost, reader, rejected, ...).",
+      "gridPos": { "x": 12, "y": 70, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "bars", "fillOpacity": 60 } }, "overrides": [] },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "refId": "A", "expr": "sum(increase(tg_expense_total[1h])) by (result)", "legendFormat": "разбор: {{result}}" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "refId": "B", "expr": "sum(increase(tg_expense_save_total[1h])) by (result)", "legendFormat": "запись: {{result}}" }
+      ] },
+
+    { "id": 53, "type": "timeseries", "title": "Не разобрано за час, по причине",
+      "description": "sum(increase(tg_parse_fail_total[1h])) by (reason): bad_amount, zero_amount, bad_date, future_date, no_amount.",
+      "gridPos": { "x": 0, "y": 78, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "bars", "fillOpacity": 60 } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(increase(tg_parse_fail_total[1h])) by (reason)", "legendFormat": "{{reason}}" } ] },
+
+    { "id": 54, "type": "timeseries", "title": "Запись в wallet-api — p50 / p95",
+      "description": "histogram_quantile по tg_wallet_push_duration_seconds_bucket — POST /sync/push от бота, все исходы.",
+      "gridPos": { "x": 8, "y": 78, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "refId": "A", "expr": "histogram_quantile(0.50, sum(rate(tg_wallet_push_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p50" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "refId": "B", "expr": "histogram_quantile(0.95, sum(rate(tg_wallet_push_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p95" }
+      ] },
+
+    { "id": 55, "type": "timeseries", "title": "Telegram Bot API — p95 по методу",
+      "description": "histogram_quantile(0.95, sum(rate(tg_telegram_api_duration_seconds_bucket[5m])) by (le, method)); getUpdates не входит — это длинный опрос.",
+      "gridPos": { "x": 16, "y": 78, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.95, sum(rate(tg_telegram_api_duration_seconds_bucket[5m])) by (le, method))", "legendFormat": "{{method}}" } ] },
+
+    { "id": 56, "type": "timeseries", "title": "Ошибки внешних вызовов и апдейтов, в минуту",
+      "description": "Telegram API по методу, wallet-api и wallet-report по виду (network / http_<код>), апдейты, упавшие с исключением.",
+      "gridPos": { "x": 0, "y": 86, "w": 16, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "refId": "A", "expr": "sum(rate(tg_api_errors_total[5m])) by (method) * 60", "legendFormat": "telegram: {{method}}" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "refId": "B", "expr": "sum(rate(tg_wallet_api_errors_total[5m])) by (kind) * 60", "legendFormat": "wallet-api: {{kind}}" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "refId": "C", "expr": "sum(rate(tg_reports_errors_total[5m])) by (kind) * 60", "legendFormat": "wallet-report: {{kind}}" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "refId": "D", "expr": "sum(rate(tg_update_failures_total[5m])) * 60", "legendFormat": "апдейт упал" }
+      ] },
+
+    { "id": 57, "type": "stat", "title": "С последнего успешного getUpdates",
+      "description": "time() - tg_last_poll_ok_timestamp_seconds. Больше пары минут — бот не получает апдейты: нет сети до api.telegram.org, неверный токен или второй экземпляр с тем же токеном.",
+      "gridPos": { "x": 16, "y": 86, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 60 }, { "color": "red", "value": 180 }] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "background", "graphMode": "none" },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "time() - max(tg_last_poll_ok_timestamp_seconds)", "legendFormat": "сек" } ] }
+  ]
+}

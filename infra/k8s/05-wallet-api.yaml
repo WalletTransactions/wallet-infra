@@ -1,0 +1,65 @@
+# wallet-api. Секрет wallet-api-env (DATABASE_URL уже с реальным паролем и
+# хостом "db") создаёт infra/k8s/apply.sh из wallet-api/.env — см. infra/k8s/README.md.
+apiVersion: v1
+kind: Service
+metadata:
+  name: wallet-api
+  namespace: wallet-transaction
+spec:
+  selector:
+    app: wallet-api
+  ports:
+    - port: 8082
+      targetPort: 8082
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wallet-api
+  namespace: wallet-transaction
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: wallet-api
+  template:
+    metadata:
+      labels:
+        app: wallet-api
+    spec:
+      initContainers:
+        # depends_on.db.condition: service_healthy в compose.yaml.
+        - name: wait-for-db
+          image: docker.io/library/postgres:16-alpine
+          command: ["sh", "-c", "until pg_isready -h db -p 5432; do sleep 2; done"]
+        # depends_on.google-auth.condition: service_healthy в compose.yaml —
+        # wallet-api тянет JWKS с google-auth при старте (см. его README), и
+        # ждём не просто открытый порт (nc -z), а реальную готовность
+        # (httplib слушает и Postgres/Redis-подключение в его main()
+        # отработало) — busybox уже содержит wget, доп. образ не нужен.
+        - name: wait-for-google-auth
+          image: docker.io/library/busybox:1.36
+          command: ["sh", "-c", "until wget -q -O /dev/null http://google-auth:8080/healthz; do sleep 2; done"]
+      containers:
+        - name: wallet-api
+          image: wallet-transaction/wallet-api:local
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - secretRef:
+                name: wallet-api-env
+          env:
+            - { name: HOST, value: "0.0.0.0" }
+            - { name: PORT, value: "8082" }
+            - { name: AUTH_SERVICE_URL, value: "http://google-auth:8080" }
+          ports:
+            - containerPort: 8082
+          # httpGet /healthz — тот же эндпоинт, что и healthcheck в
+          # compose.yaml (см. src/docs.cpp: handle_healthz).
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8082 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8082 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
