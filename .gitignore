@@ -13,3 +13,5 @@ __pycache__/
 venv/
 # Временные файлы infra/k8s/apply.sh (отфильтрованные .env сервисов)
 infra/k8s/.*.env.filtered
+# Временный override нагрузочных прогонов (генерирует Jenkins, *-loadtest)
+compose.loadtest-override.yaml

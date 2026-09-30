@@ -203,12 +203,13 @@ services:
       dockerfile: Containerfile
       # GIT_COMMIT — короткий хэш коммита, попадает в GET /version и в
       # build_info метрику (см. CMakeLists.txt google-auth, "Версия
-      # приложения"). ${GIT_COMMIT:-unknown} — переменная окружения ТАМ, ГДЕ
-      # запущен сам `docker compose ... build/up --build`
-      # (GIT_COMMIT=$(git rev-parse --short HEAD) docker compose ...); не
-      # задана — "unknown", сборка не падает.
+      # приложения"). У каждого сервиса свой репозиторий, поэтому и своя
+      # переменная: GIT_COMMIT_<СЕРВИС> (выставляет Jenkins, deploy_services.sh,
+      # из git соседней папки сервиса), запасной вариант — общий GIT_COMMIT,
+      # не задано ничего — "unknown", сборка не падает. Вручную:
+      #   GIT_COMMIT_GOOGLE_AUTH=$(git -C ../google-auth rev-parse --short HEAD) docker compose ...
       args:
-        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+        GIT_COMMIT: ${GIT_COMMIT_GOOGLE_AUTH:-${GIT_COMMIT:-unknown}}
     restart: unless-stopped
     logging:
       driver: journald
@@ -275,7 +276,7 @@ services:
       dockerfile: Containerfile
       # GIT_COMMIT — см. комментарий у google-auth выше, тот же приём.
       args:
-        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+        GIT_COMMIT: ${GIT_COMMIT_WALLET_API:-${GIT_COMMIT:-unknown}}
     restart: unless-stopped
     logging:
       driver: journald
@@ -325,7 +326,7 @@ services:
       dockerfile: Containerfile
       # GIT_COMMIT — см. комментарий у google-auth выше, тот же приём.
       args:
-        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+        GIT_COMMIT: ${GIT_COMMIT_WALLET_REPORT:-${GIT_COMMIT:-unknown}}
     restart: unless-stopped
     logging:
       driver: journald
@@ -365,7 +366,7 @@ services:
       dockerfile: Containerfile
       # GIT_COMMIT — см. комментарий у google-auth выше, тот же приём.
       args:
-        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+        GIT_COMMIT: ${GIT_COMMIT_WALLET_GATEWAY:-${GIT_COMMIT:-unknown}}
     restart: unless-stopped
     logging:
       driver: journald
@@ -416,7 +417,7 @@ services:
       context: ../wallet-telegram
       dockerfile: Containerfile
       args:
-        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+        GIT_COMMIT: ${GIT_COMMIT_WALLET_TELEGRAM:-${GIT_COMMIT:-unknown}}
     restart: unless-stopped
     stop_grace_period: 35s
     logging:
