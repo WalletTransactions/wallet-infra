@@ -482,6 +482,9 @@ services:
       WALLET_REPORT_URL: http://wallet-report:8084
       # Запись трат — POST /sync/push токеном бота (scope expense:write).
       WALLET_API_URL: http://wallet-api:8082
+      # Трата свободным текстом — задание parse_expense (scope ai:use). Не
+      # отвечает — бот работает строгим форматом, поэтому без depends_on.
+      WALLET_AI_URL: http://wallet-ai:8087
       DATABASE_URL: postgresql://${TELEGRAM_POSTGRES_USER}:${TELEGRAM_POSTGRES_PASSWORD}@db:5432/${TELEGRAM_POSTGRES_DB}
     depends_on:
       google-auth:

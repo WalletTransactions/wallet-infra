@@ -47,6 +47,9 @@ spec:
             - { name: AUTH_SERVICE_URL, value: "http://google-auth:8080" }
             - { name: WALLET_REPORT_URL, value: "http://wallet-report:8084" }
             - { name: WALLET_API_URL, value: "http://wallet-api:8082" }
+            # ИИ в кластере выключен (LLM нет): wallet-ai ответит 503 — бот
+            # сразу работает строгим форматом.
+            - { name: WALLET_AI_URL, value: "http://wallet-ai:8087" }
           ports:
             - containerPort: 8086
           readinessProbe:
