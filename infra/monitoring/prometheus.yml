@@ -37,6 +37,9 @@ scrape_configs:
   - job_name: wallet-telegram
     static_configs:
       - targets: ["wallet-telegram:8086"]
+  - job_name: wallet-ai
+    static_configs:
+      - targets: ["wallet-ai:8087"]
 
   # CPU/RAM/сеть ПО КОНТЕЙНЕРАМ (container_cpu_usage_seconds_total,
   # container_memory_usage_bytes, container_network_{receive,transmit}_bytes_total,

@@ -146,10 +146,11 @@ echo "==> миграции (см. infra/db/README.md \"Миграции\" — fo
 "${KCTL[@]}" apply -f "$ROOT_DIR/infra/k8s/03-migrate-job.yaml"
 "${KCTL[@]}" wait --for=condition=complete --timeout=120s job/db-migrate-auth job/db-migrate-wallet job/db-migrate-telegram
 
-echo "==> google-auth, wallet-api, wallet-report, wallet-gateway, wallet-web, wallet-telegram"
+echo "==> google-auth, wallet-api, wallet-report, wallet-ai, wallet-gateway, wallet-web, wallet-telegram"
 "${KCTL[@]}" apply -f "$ROOT_DIR/infra/k8s/04-google-auth.yaml"
 "${KCTL[@]}" apply -f "$ROOT_DIR/infra/k8s/05-wallet-api.yaml"
 "${KCTL[@]}" apply -f "$ROOT_DIR/infra/k8s/08-wallet-report.yaml"
+"${KCTL[@]}" apply -f "$ROOT_DIR/infra/k8s/10-wallet-ai.yaml"
 "${KCTL[@]}" apply -f "$ROOT_DIR/infra/k8s/06-wallet-gateway.yaml"
 "${KCTL[@]}" apply -f "$ROOT_DIR/infra/k8s/07-wallet-web.yaml"
 "${KCTL[@]}" apply -f "$ROOT_DIR/infra/k8s/09-wallet-telegram.yaml"

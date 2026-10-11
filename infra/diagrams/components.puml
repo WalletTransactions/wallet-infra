@@ -18,7 +18,12 @@ node "Публичная точка входа" {
 node "Внутренние сервисы\n(сейчас тоже слушают свои порты\nнапрямую — см. note ниже)" {
   [google-auth\n(auth-service)\n:8080\n\n— OAuth-флоу + отложенное\n  подтверждение регистрации\n  нового пользователя\n— выпуск/ротация JWT-сессии\n  (access + refresh)\n— GET /auth/me, GET /admin/users —\n  JSON API, SPA (wallet-web) сама\n  рисует и дашборд, и админ-таблицу\n— POST /admin/users/:id/logout —\n  принудительный отзыв ВСЕХ\n  токенов пользователя (admin)] as AUTH
   [wallet-api\n:8082\n\n— демо-CRUD /api/wallets (legacy)\n— домен леджера/синка (Фаза 2):\n  POST /sync/push, GET /sync/pull,\n  /sync/blobs — офлайн-first Android\n— доступ/приглашения (Фаза 6):\n  /api/ledger/*, /api/invites/accept\n— своя БД, читает JWT (JWKS), не выпускает] as API
+  [wallet-ai\n:8087\n\n— LLM-функции: GET /api/ai/status\n  (дальше — разбор трат текстом,\n  импорт выписок, чат)\n— НИЧЕГО не пишет: черновики,\n  запись делает клиент\n— JWT (JWKS): aud wallet-ai,\n  scope ai:use] as AI
   [wallet-report\n:8084\n\n— CQRS-lite: GET /api/reports/*\n  (баланс/доход/расход/структура/\n  операции/обороты кошельков)\n— читает ТУ ЖЕ БД, что wallet-api,\n  но СВОИМ соединением, ролью\n  wallet_reader (только SELECT)\n— тоже читает JWT (JWKS) сам] as REPORTS
+}
+
+node "Хост разработчика\n(вне docker, GPU)" {
+  [LM Studio\n:1234, OpenAI API\n(gemma-4-e4b как wallet-parse)] as LLM
 }
 
 node "Статика (не C++, без JWT)" {
@@ -45,11 +50,14 @@ User --> GW : HTTPS — всегда один origin
 
 GW --> AUTH    : "/auth/*, /admin/* — открыты (своя\n            auth/role-логика внутри, см. sequence.puml)"
 GW --> REPORTS : "/api/reports/* — JWT-гейт, ДО общего\n            /api/* ниже (иначе тот перехватил бы первым)"
+GW --> AI      : "/api/ai/* — JWT-гейт (aud wallet-ai),\n            тоже ДО общего /api/*"
 GW --> API     : "/api/*, /sync/* — JWT-гейт (подпись+exp),\n            затем proxy на wallet-api"
 GW --> WEB     : "всё остальное — открыт\n(фолбэк по умолчанию, включая /join/<token>)"
 
 GW ..> AUTH : "GET /.well-known/jwks.json\n(при старте + при незнакомом kid,\nкэшируется в памяти)"
 API ..> AUTH : "GET /.well-known/jwks.json\n(тот же кэш-клиент — wallet-api\nсам никого не логинит)"
+AI ..> AUTH : "GET /.well-known/jwks.json"
+AI ..> LLM : "GET /v1/models (проба раз в минуту);\nchat/completions — с шага 2\n(host.docker.internal)"
 REPORTS ..> AUTH : "GET /.well-known/jwks.json\n(та же независимая проверка,\nтретья копия того же кода)"
 
 AUTH --> T_USERS

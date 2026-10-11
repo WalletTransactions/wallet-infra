@@ -24,6 +24,7 @@ google-auth, wallet-api, wallet-report, wallet-gateway, wallet-web), та же
 | `06-wallet-gateway.yaml` | wallet-gateway: Service (NodePort) + Deployment — единственный сервис без секретов, все значения прямо в файле |
 | `07-wallet-web.yaml` | wallet-web (nginx-статика): Service + Deployment, без секретов |
 | `08-wallet-report.yaml` | wallet-report: Service + Deployment (ссылается на Secret `wallet-report-env`) — CQRS-lite query-сторона, читает БД ролью `wallet_reader`, писать не может физически |
+| `10-wallet-ai.yaml` | wallet-ai: Service + Deployment, без секретов — LLM в кластере нет (`LLM_URL` не задан), ИИ выключен, `/api/ai/status` → `enabled=false` |
 | `apply.sh` | Оркестрирует всё это по порядку — см. "Запуск" ниже |
 
 ## Перед первым запуском
@@ -55,6 +56,7 @@ wallet-api,wallet-report,wallet-gateway,wallet-web}:local` нужно собра
 minikube image build -t wallet-transaction/google-auth:local ./google-auth
 minikube image build -t wallet-transaction/wallet-api:local ./wallet-api
 minikube image build -t wallet-transaction/wallet-report:local ./wallet-report
+minikube image build -t wallet-transaction/wallet-ai:local ./wallet-ai
 minikube image build -t wallet-transaction/wallet-gateway:local ./wallet-gateway
 minikube image build -t wallet-transaction/wallet-web:local ./wallet-web
 

@@ -360,6 +360,44 @@ services:
     networks:
       - wallet-net
 
+  # LLM-функции (org/docs/TODO_wallet_ai.md): разбор трат текстом, импорт
+  # выписок, чат. Ничего не пишет в кошелёк. LLM — LM Studio на ХОСТЕ (GPU),
+  # вне compose: host.docker.internal через host-gateway. depends_on на LLM
+  # нет — она необязательна: без неё /api/ai/status отвечает enabled=false.
+  # LLM_URL/LLM_MODEL/LLM_API_KEY — из wallet-ai/.env (required: false —
+  # без .env сервис стартует с выключенным ИИ).
+  wallet-ai:
+    build:
+      context: ../wallet-ai
+      dockerfile: Containerfile
+      args:
+        GIT_COMMIT: ${GIT_COMMIT_WALLET_AI:-${GIT_COMMIT:-unknown}}
+    restart: unless-stopped
+    logging:
+      driver: journald
+    env_file:
+      - path: ../wallet-ai/.env
+        required: false
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8087
+      AUTH_SERVICE_URL: http://google-auth:8080
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      google-auth:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8087/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    ports:
+      - "8087:8087" # опционально: прямой доступ мимо гейтвея, удобно для curl-проверок
+    networks:
+      - wallet-net
+
   wallet-gateway:
     build:
       context: ../wallet-gateway
@@ -378,6 +416,7 @@ services:
       AUTH_SERVICE_URL: http://google-auth:8080
       WALLET_API_URL: http://wallet-api:8082
       WALLET_REPORT_API_URL: http://wallet-report:8084
+      WALLET_AI_URL: http://wallet-ai:8087
       WALLET_WEB_URL: http://wallet-web:80
     depends_on:
       google-auth:
@@ -385,6 +424,8 @@ services:
       wallet-api:
         condition: service_healthy
       wallet-report:
+        condition: service_healthy
+      wallet-ai:
         condition: service_healthy
       wallet-web:
         condition: service_healthy

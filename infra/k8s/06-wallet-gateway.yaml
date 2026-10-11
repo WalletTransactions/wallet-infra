@@ -65,6 +65,7 @@ spec:
             - { name: AUTH_SERVICE_URL, value: "http://google-auth:8080" }
             - { name: WALLET_API_URL, value: "http://wallet-api:8082" }
             - { name: WALLET_REPORT_API_URL, value: "http://wallet-report:8084" }
+            - { name: WALLET_AI_URL, value: "http://wallet-ai:8087" }
             - { name: WALLET_WEB_URL, value: "http://wallet-web:80" }
           ports:
             - containerPort: 8090
