@@ -382,10 +382,14 @@ services:
       HOST: 0.0.0.0
       PORT: 8087
       AUTH_SERVICE_URL: http://google-auth:8080
+      # Справочник счетов пользователя (его токеном) — при создании задания.
+      WALLET_REPORT_URL: http://wallet-report:8084
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
       google-auth:
+        condition: service_healthy
+      wallet-report:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:8087/healthz"]

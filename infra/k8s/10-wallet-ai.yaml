@@ -47,6 +47,7 @@ spec:
             - { name: HOST, value: "0.0.0.0" }
             - { name: PORT, value: "8087" }
             - { name: AUTH_SERVICE_URL, value: "http://google-auth:8080" }
+            - { name: WALLET_REPORT_URL, value: "http://wallet-report:8084" }
           ports:
             - containerPort: 8087
           readinessProbe:
