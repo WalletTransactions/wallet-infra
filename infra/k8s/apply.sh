@@ -114,6 +114,12 @@ kubectl create secret generic wallet-telegram-env -n "$NS" \
     --dry-run=client -o yaml | "${KCTL[@]}" apply -f -
 rm -f "$ROOT_DIR/infra/k8s/.wallet-telegram.env.filtered"
 
+# wallet-ai-db — только DATABASE_URL своей базы ai (импорт выписок) с хостом
+# "db"; остальные настройки wallet-ai — env: в infra/k8s/10-wallet-ai.yaml.
+kubectl create secret generic wallet-ai-db -n "$NS" \
+    --from-literal=DATABASE_URL="postgresql://${AI_POSTGRES_USER}:${AI_POSTGRES_PASSWORD}@db:5432/${AI_POSTGRES_DB}" \
+    --dry-run=client -o yaml | "${KCTL[@]}" apply -f -
+
 # ConfigMap'ы из самостоятельных файлов (не копии внутри YAML, см.
 # комментарии в infra/k8s/01-db.yaml и infra/k8s/03-migrate-job.yaml).
 kubectl create configmap db-init-script -n "$NS" \
@@ -127,6 +133,9 @@ kubectl create configmap migrate-wallet-sql -n "$NS" \
     --dry-run=client -o yaml | "${KCTL[@]}" apply -f -
 kubectl create configmap migrate-telegram-sql -n "$NS" \
     --from-file="$WORKSPACE_DIR/wallet-telegram/migrations" \
+    --dry-run=client -o yaml | "${KCTL[@]}" apply -f -
+kubectl create configmap migrate-ai-sql -n "$NS" \
+    --from-file="$WORKSPACE_DIR/wallet-ai/migrations" \
     --dry-run=client -o yaml | "${KCTL[@]}" apply -f -
 
 if [[ "${1:-}" == "--secrets-only" ]]; then
@@ -142,9 +151,9 @@ echo "==> ждём db..."
 "${KCTL[@]}" wait --for=condition=available --timeout=120s deployment/db
 
 echo "==> миграции (см. infra/db/README.md \"Миграции\" — force вместо up, если база уже существовала ДО перехода на golang-migrate, см. README)"
-"${KCTL[@]}" delete job db-migrate-auth db-migrate-wallet db-migrate-telegram --ignore-not-found
+"${KCTL[@]}" delete job db-migrate-auth db-migrate-wallet db-migrate-telegram db-migrate-ai --ignore-not-found
 "${KCTL[@]}" apply -f "$ROOT_DIR/infra/k8s/03-migrate-job.yaml"
-"${KCTL[@]}" wait --for=condition=complete --timeout=120s job/db-migrate-auth job/db-migrate-wallet job/db-migrate-telegram
+"${KCTL[@]}" wait --for=condition=complete --timeout=120s job/db-migrate-auth job/db-migrate-wallet job/db-migrate-telegram job/db-migrate-ai
 
 echo "==> google-auth, wallet-api, wallet-report, wallet-ai, wallet-gateway, wallet-web, wallet-telegram"
 "${KCTL[@]}" apply -f "$ROOT_DIR/infra/k8s/04-google-auth.yaml"

@@ -2,7 +2,11 @@
 # нет (LM Studio живёт на хосте разработчика), поэтому LLM_URL не задан:
 # сервис стартует с выключенным ИИ, /api/ai/status отвечает enabled=false.
 # Отдельный под llama-server с GPU — когда понадобится; тогда LLM_URL/
-# LLM_MODEL сюда и секрет с LLM_API_KEY. Секретов сейчас нет.
+# LLM_MODEL сюда и секрет с LLM_API_KEY.
+#
+# Своя база ai (импорт выписок): DATABASE_URL — из секрета wallet-ai-db
+# (infra/k8s/apply.sh), схема — Job db-migrate-ai. Без базы сервис стартует,
+# импорт выключен.
 #
 # Образ: соберите и загрузите в кластер СВОИМИ руками перед apply (см.
 # infra/k8s/README.md, "Сборка образов").
@@ -48,6 +52,8 @@ spec:
             - { name: PORT, value: "8087" }
             - { name: AUTH_SERVICE_URL, value: "http://google-auth:8080" }
             - { name: WALLET_REPORT_URL, value: "http://wallet-report:8084" }
+            - name: DATABASE_URL
+              valueFrom: { secretKeyRef: { name: wallet-ai-db, key: DATABASE_URL } }
           ports:
             - containerPort: 8087
           readinessProbe:

@@ -37,8 +37,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
 target="${1:-}"
-if [[ "$target" != "auth" && "$target" != "wallet" && "$target" != "perf" && "$target" != "telegram" ]]; then
-    echo "Использование: $0 <auth|wallet|perf|telegram> <команда migrate...>  (up | down N | force N | version | ...)" >&2
+if [[ "$target" != "auth" && "$target" != "wallet" && "$target" != "perf" && "$target" != "telegram" && "$target" != "ai" ]]; then
+    echo "Использование: $0 <auth|wallet|perf|telegram|ai> <команда migrate...>  (up | down N | force N | version | ...)" >&2
     exit 1
 fi
 shift
@@ -64,12 +64,15 @@ elif [[ "$target" == "telegram" ]]; then
     # "unbound variable" вместо подсказки ниже.
     db_name="${TELEGRAM_POSTGRES_DB:-}"
     migrations_dir="$WORKSPACE_DIR/wallet-telegram/migrations"
+elif [[ "$target" == "ai" ]]; then
+    db_name="${AI_POSTGRES_DB:-}"
+    migrations_dir="$WORKSPACE_DIR/wallet-ai/migrations"
 else
     db_name="$PERF_POSTGRES_DB"
     migrations_dir="$SCRIPT_DIR/migrations/perf"
 fi
 if [[ -z "$db_name" ]]; then
-    echo "Для '$target' не задано имя базы в $ENV_FILE — добавьте переменные из infra/db/.env.example (для telegram: TELEGRAM_POSTGRES_*)." >&2
+    echo "Для '$target' не задано имя базы в $ENV_FILE — добавьте переменные из infra/db/.env.example (для telegram: TELEGRAM_POSTGRES_*, для ai: AI_POSTGRES_*)." >&2
     exit 1
 fi
 
@@ -125,6 +128,9 @@ if [[ "$db_exists" != "1" ]]; then
         -e TELEGRAM_POSTGRES_USER="${TELEGRAM_POSTGRES_USER:-}" \
         -e TELEGRAM_POSTGRES_PASSWORD="${TELEGRAM_POSTGRES_PASSWORD:-}" \
         -e TELEGRAM_POSTGRES_DB="${TELEGRAM_POSTGRES_DB:-}" \
+        -e AI_POSTGRES_USER="${AI_POSTGRES_USER:-}" \
+        -e AI_POSTGRES_PASSWORD="${AI_POSTGRES_PASSWORD:-}" \
+        -e AI_POSTGRES_DB="${AI_POSTGRES_DB:-}" \
         "$db_container" sh < "$SCRIPT_DIR/init-db.sh"
 fi
 

@@ -136,3 +136,44 @@ spec:
         - name: migrations
           configMap:
             name: migrate-telegram-sql
+---
+# Своя база wallet-ai — импорт выписок (wallet-ai/migrations/).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: db-migrate-ai
+  namespace: wallet-transaction
+spec:
+  backoffLimit: 2
+  template:
+    spec:
+      restartPolicy: OnFailure
+      initContainers:
+        - name: wait-for-db
+          image: docker.io/library/postgres:16-alpine
+          env:
+            - name: PGUSER
+              valueFrom: { secretKeyRef: { name: db-credentials, key: MIGRATOR_POSTGRES_USER } }
+          command: ["sh", "-c", "until pg_isready -h db -p 5432 -U \"$PGUSER\"; do sleep 2; done"]
+      containers:
+        - name: migrate
+          image: docker.io/migrate/migrate:v4
+          env:
+            - name: MIGRATOR_POSTGRES_USER
+              valueFrom: { secretKeyRef: { name: db-credentials, key: MIGRATOR_POSTGRES_USER } }
+            - name: MIGRATOR_POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: db-credentials, key: MIGRATOR_POSTGRES_PASSWORD } }
+            - name: AI_POSTGRES_DB
+              valueFrom: { secretKeyRef: { name: db-credentials, key: AI_POSTGRES_DB } }
+          args:
+            - "-path=/migrations"
+            - "-database=postgres://$(MIGRATOR_POSTGRES_USER):$(MIGRATOR_POSTGRES_PASSWORD)@db:5432/$(AI_POSTGRES_DB)?sslmode=disable"
+            - "up"
+          volumeMounts:
+            - name: migrations
+              mountPath: /migrations
+              readOnly: true
+      volumes:
+        - name: migrations
+          configMap:
+            name: migrate-ai-sql

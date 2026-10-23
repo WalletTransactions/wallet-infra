@@ -38,7 +38,9 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname postgres \
      -v perfuser="$PERF_POSTGRES_USER" -v perfpass="$PERF_POSTGRES_PASSWORD" \
      -v perfdb="$PERF_POSTGRES_DB" \
      -v tguser="$TELEGRAM_POSTGRES_USER" -v tgpass="$TELEGRAM_POSTGRES_PASSWORD" \
-     -v tgdb="$TELEGRAM_POSTGRES_DB" <<-'SQL'
+     -v tgdb="$TELEGRAM_POSTGRES_DB" \
+     -v aiuser="$AI_POSTGRES_USER" -v aipass="$AI_POSTGRES_PASSWORD" \
+     -v aidb="$AI_POSTGRES_DB" <<-'SQL'
     -- CREATE ROLE/DATABASE не поддерживают IF NOT EXISTS в ванильном
     -- Postgres — условная генерация через \gexec: этот SELECT не выполняет
     -- CREATE сам, а СТРОИТ его текст как обычную строку (||-конкатенация),
@@ -99,6 +101,12 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname postgres \
     SELECT 'CREATE ROLE ' || quote_ident(:'tguser') || ' LOGIN PASSWORD ' || quote_literal(:'tgpass')
     WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = :'tguser')\gexec
 
+    -- Седьмая роль — wallet-ai (импорт выписок, см. wallet-ai/migrations/).
+    -- Своя база: импорты, строки, правила продавцов. К базе кошелька доступа
+    -- нет — в кошелёк пишет клиент через /sync/push.
+    SELECT 'CREATE ROLE ' || quote_ident(:'aiuser') || ' LOGIN PASSWORD ' || quote_literal(:'aipass')
+    WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = :'aiuser')\gexec
+
     -- Владелец всех трёх баз — МИГРАТОР (текущая роль, $POSTGRES_USER), не
     -- app-роль: тогда и таблицы внутри будут принадлежать мигратору, и
     -- ALTER DEFAULT PRIVILEGES ниже (запускается тоже мигратором) сработает
@@ -115,6 +123,9 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname postgres \
     SELECT 'CREATE DATABASE ' || quote_ident(:'tgdb')
     WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = :'tgdb')\gexec
 
+    SELECT 'CREATE DATABASE ' || quote_ident(:'aidb')
+    WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = :'aidb')\gexec
+
     -- Defense in depth: Postgres по умолчанию даёт роли PUBLIC право CONNECT
     -- на любую новую базу — без этого auth-роль технически могла бы
     -- подключиться к базе wallet-api и наоборот (хоть и не прочитать там
@@ -126,10 +137,12 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname postgres \
     REVOKE CONNECT ON DATABASE :"walletdb" FROM PUBLIC;
     REVOKE CONNECT ON DATABASE :"perfdb" FROM PUBLIC;
     REVOKE CONNECT ON DATABASE :"tgdb" FROM PUBLIC;
+    REVOKE CONNECT ON DATABASE :"aidb" FROM PUBLIC;
     GRANT CONNECT ON DATABASE :"authdb" TO :"authuser";
     GRANT CONNECT ON DATABASE :"walletdb" TO :"walletuser";
     GRANT CONNECT ON DATABASE :"perfdb" TO :"perfuser";
     GRANT CONNECT ON DATABASE :"tgdb" TO :"tguser";
+    GRANT CONNECT ON DATABASE :"aidb" TO :"aiuser";
     -- monitoring-роль подключается ко всем трём (postgres_exporter — с
     -- --auto-discover-databases, см. compose.yaml) — pg_monitor выше даёт ей
     -- право ЧИТАТЬ статистику отовсюду, но не право вообще ПОДКЛЮЧИТЬСЯ к
@@ -138,6 +151,7 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname postgres \
     GRANT CONNECT ON DATABASE :"walletdb" TO :"monuser";
     GRANT CONNECT ON DATABASE :"perfdb" TO :"monuser";
     GRANT CONNECT ON DATABASE :"tgdb" TO :"monuser";
+    GRANT CONNECT ON DATABASE :"aidb" TO :"monuser";
     -- perf_reader (Grafana, см. infra/db/migrations/perf/000001_init.up.sql)
     -- подключается ТОЛЬКО к perf_history — ей нечего делать в auth/wallet.
     -- Сама роль заводится позже, миграцией perf (нужны её собственные
@@ -222,4 +236,18 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$TELEGRAM_POSTGRES
         GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO :"tguser";
     ALTER DEFAULT PRIVILEGES IN SCHEMA public
         GRANT USAGE ON SEQUENCES TO :"tguser";
+SQL
+
+# --- 6. Права wallet-ai (своя база, см. wallet-ai/migrations/) ---
+# Тот же принцип: только DML на таблицы, которые создаст мигратор
+# (`infra/db/migrate.sh ai up`).
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$AI_POSTGRES_DB" \
+     -v aiuser="$AI_POSTGRES_USER" <<-'SQL'
+    CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+
+    GRANT USAGE ON SCHEMA public TO :"aiuser";
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public
+        GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO :"aiuser";
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public
+        GRANT USAGE ON SEQUENCES TO :"aiuser";
 SQL
