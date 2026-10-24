@@ -1,8 +1,10 @@
 #!/bin/sh
 # Постгрес-образ прогоняет всё из /docker-entrypoint-initdb.d только один раз
 # — при первой инициализации ПУСТОГО volume (db-data). На уже существующем
-# volume этот скрипт не выполнится сам — тогда накатите его руками:
-#   podman exec -i <контейнер db> sh < infra/db/init-db.sh
+# volume этот скрипт не выполнится сам — его прогоняет infra/env/migrate.sh,
+# если нужной базы на томе нет, или руками (скрипт и переменные ролей уже
+# есть у контейнера db, см. compose.yaml):
+#   docker exec wallet-<env>-db-1 sh /docker-entrypoint-initdb.d/init-db.sh
 #
 # ТРИ роли, не одна общая и не две (см. infra/db/README.md, "Три роли"):
 #   1. МИГРАТОР ($POSTGRES_USER — так его называет сам образ postgres,
@@ -10,14 +12,14 @@
 #      bootstrap-роль образа, фактически суперпользователь. Создаёт обе базы,
 #      обе app-роли, владеет всеми таблицами и умеет их менять (DDL) — это и
 #      есть та роль, которой дальше накатываются версионированные миграции
-#      (см. infra/db/migrate.sh и infra/db/README.md, "Миграции").
+#      (см. infra/env/migrate.sh и infra/db/README.md, "Миграции").
 #   2. AUTH_POSTGRES_USER — роль google-auth. Только DML на СВОИ таблицы
 #      (SELECT/INSERT/UPDATE/DELETE) — ни CREATE/ALTER/DROP, ни TRUNCATE.
 #   3. WALLET_POSTGRES_USER — роль wallet-api. То же самое, только своя база.
 #
 # ЭТОТ скрипт больше НЕ создаёт таблицы (roles/users/wallets) — они переехали
 # в версионированные миграции ({google-auth,wallet-api}/migrations/, накатываются
-# infra/db/migrate.sh, см. infra/db/README.md, "Миграции"). Здесь остаётся только
+# infra/env/migrate.sh, см. infra/db/README.md, "Миграции"). Здесь остаётся только
 # bootstrap: роли+базы (нужен доступ к maintenance-базе "postgres", которого
 # у мигратора-как-обычной-app-роли в чужой базе не было бы) и права DML для
 # app-ролей на их будущие таблицы (ALTER DEFAULT PRIVILEGES — должен
@@ -40,7 +42,8 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname postgres \
      -v tguser="$TELEGRAM_POSTGRES_USER" -v tgpass="$TELEGRAM_POSTGRES_PASSWORD" \
      -v tgdb="$TELEGRAM_POSTGRES_DB" \
      -v aiuser="$AI_POSTGRES_USER" -v aipass="$AI_POSTGRES_PASSWORD" \
-     -v aidb="$AI_POSTGRES_DB" <<-'SQL'
+     -v aidb="$AI_POSTGRES_DB" \
+     -v dumpuser="$DUMPER_POSTGRES_USER" -v dumppass="$DUMPER_POSTGRES_PASSWORD" <<-'SQL'
     -- CREATE ROLE/DATABASE не поддерживают IF NOT EXISTS в ванильном
     -- Postgres — условная генерация через \gexec: этот SELECT не выполняет
     -- CREATE сам, а СТРОИТ его текст как обычную строку (||-конкатенация),
@@ -107,6 +110,16 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname postgres \
     SELECT 'CREATE ROLE ' || quote_ident(:'aiuser') || ' LOGIN PASSWORD ' || quote_literal(:'aipass')
     WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = :'aiuser')\gexec
 
+    -- Восьмая роль — только дампы: бэкап prod перед миграцией и ежесуточно,
+    -- дамп prod для перезаливки test (infra/env/backup.sh, test-refresh.sh).
+    -- pg_read_all_data — встроенная роль Postgres 14+: SELECT на все
+    -- таблицы, представления и последовательности во всех базах, но ни
+    -- одной записи и ни одного DDL. wallet_reader не подходит — он видит
+    -- только базу wallet.
+    SELECT 'CREATE ROLE ' || quote_ident(:'dumpuser') || ' LOGIN PASSWORD ' || quote_literal(:'dumppass')
+    WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = :'dumpuser')\gexec
+    GRANT pg_read_all_data TO :"dumpuser";
+
     -- Владелец всех трёх баз — МИГРАТОР (текущая роль, $POSTGRES_USER), не
     -- app-роль: тогда и таблицы внутри будут принадлежать мигратору, и
     -- ALTER DEFAULT PRIVILEGES ниже (запускается тоже мигратором) сработает
@@ -152,6 +165,11 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname postgres \
     GRANT CONNECT ON DATABASE :"perfdb" TO :"monuser";
     GRANT CONNECT ON DATABASE :"tgdb" TO :"monuser";
     GRANT CONNECT ON DATABASE :"aidb" TO :"monuser";
+    -- dumper — к четырём базам сервисов (perf_history дампить незачем).
+    GRANT CONNECT ON DATABASE :"authdb" TO :"dumpuser";
+    GRANT CONNECT ON DATABASE :"walletdb" TO :"dumpuser";
+    GRANT CONNECT ON DATABASE :"tgdb" TO :"dumpuser";
+    GRANT CONNECT ON DATABASE :"aidb" TO :"dumpuser";
     -- perf_reader (Grafana, см. infra/db/migrations/perf/000001_init.up.sql)
     -- подключается ТОЛЬКО к perf_history — ей нечего делать в auth/wallet.
     -- Сама роль заводится позже, миграцией perf (нужны её собственные
@@ -162,7 +180,7 @@ SQL
 
 # --- 2. Права google-auth (подключение к его собственной базе) ---
 # Схема (roles/users) сюда больше не входит — см. google-auth/migrations/,
-# накатывается отдельно через infra/db/migrate.sh ПОСЛЕ этого bootstrap-шага.
+# накатывается отдельно через infra/env/migrate.sh ПОСЛЕ этого bootstrap-шага.
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$AUTH_POSTGRES_DB" \
      -v authuser="$AUTH_POSTGRES_USER" <<-'SQL'
     -- Собирает статистику латентности/вызовов ПО КАЖДОМУ нормализованному
@@ -191,7 +209,7 @@ SQL
 
 # --- 3. Права wallet-api (подключение к его собственной базе) ---
 # Схема (wallets) сюда больше не входит — см. wallet-api/migrations/,
-# накатывается отдельно через infra/db/migrate.sh ПОСЛЕ этого bootstrap-шага.
+# накатывается отдельно через infra/env/migrate.sh ПОСЛЕ этого bootstrap-шага.
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$WALLET_POSTGRES_DB" \
      -v walletuser="$WALLET_POSTGRES_USER" <<-'SQL'
     -- См. тот же CREATE EXTENSION и комментарий в блоке AUTH_POSTGRES_DB выше.
@@ -209,7 +227,7 @@ SQL
 # --- 4. Права record_run.sh (подключение к своей, отдельной от кошелька, базе) ---
 # Схема (test_run/test_result) сюда не входит — см.
 # infra/db/migrations/perf/, накатывается отдельно через
-# `infra/db/migrate.sh perf up` ПОСЛЕ этого bootstrap-шага. Никакого
+# `infra/env/migrate.sh <env> perf` ПОСЛЕ этого bootstrap-шага. Никакого
 # pg_stat_statements здесь — эта база не про запросы самого сервиса
 # (метрики уровня приложения из неё же снимает postgres-exporter наравне с
 # auth/wallet), а про историю нагрузочных прогонов.
@@ -226,7 +244,7 @@ SQL
 
 # --- 5. Права wallet-telegram (своя база, см. wallet-telegram/migrations/) ---
 # Тот же принцип, что у google-auth/wallet-api выше: только DML на таблицы,
-# которые позже создаст мигратор (`infra/db/migrate.sh telegram up`).
+# которые позже создаст мигратор (`infra/env/migrate.sh <env> telegram`).
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$TELEGRAM_POSTGRES_DB" \
      -v tguser="$TELEGRAM_POSTGRES_USER" <<-'SQL'
     CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
@@ -240,7 +258,7 @@ SQL
 
 # --- 6. Права wallet-ai (своя база, см. wallet-ai/migrations/) ---
 # Тот же принцип: только DML на таблицы, которые создаст мигратор
-# (`infra/db/migrate.sh ai up`).
+# (`infra/env/migrate.sh <env> ai`).
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$AI_POSTGRES_DB" \
      -v aiuser="$AI_POSTGRES_USER" <<-'SQL'
     CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
