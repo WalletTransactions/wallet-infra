@@ -105,11 +105,10 @@
 
 - [ ] 7.1 Собрать `~/.config/wallet-secrets/prod/` с новыми значениями (D7): пароли БД (включая `READER_POSTGRES_PASSWORD`), RSA-ключ, `TELEGRAM_SERVICE_SECRET`; токен @WalletTransaction_bot и Google OAuth — прежние; `REDIRECT_URL` на `:8090`. Каталог 700, файлы 600. Проверка: `stat` показывает права, ни один пароль и ключ не совпадает с test.
 - [ ] 7.2 Подготовить финальные теги `vX.Y.Z` всех сервисов на коммитах rc, прошедших 5.3 и 5.4. Проверка: digest каждого финального образа есть в `test/verified`.
-- [ ] 7.3 Выполнить переключение по Migration Plan, шаг 3:
-  1. `docker compose -p servers stop`;
-  2. миграции четырёх баз prod на пустых томах;
-  3. `up.sh prod` с финальными тегами;
-  4. smoke.
+- [ ] 7.3 Поднять prod по Migration Plan, шаг 4 (старый стек `servers` уже снесён):
+  1. `tags.env` prod с финальными тегами;
+  2. `up.sh prod` — миграции четырёх баз на пустых томах, затем сервисы;
+  3. smoke.
 
   Проверка: `curl :8090/healthz` — 200, `/version` каждого сервиса показывает финальную версию.
 - [ ] 7.4 Проверить prod вживую:
@@ -118,7 +117,7 @@
   - привязка @WalletTransaction_bot заново и команда ему;
   - `/api/ai/status` — `enabled=true`.
 
-  При провале — откат по Migration Plan, шаг 4.
+  При провале — Migration Plan, шаг 5 (отката на `servers` нет).
 - [ ] 7.5 Обновить корневой `README.md`: два контура, порты, ссылка на `infra/env/README.md`, нет локального `up --build`. Проверка: раздел «Запуск» описывает оба контура и не упоминает `servers` и `infra/db/.env` как способ запуска.
 
 ## 8. Наблюдаемость
@@ -141,5 +140,5 @@
 
 ## Workflow follow-up
 
-- Через две недели стабильной работы prod: `docker compose -p servers down -v`, сеть `wallet-net` и старые образы (Migration Plan, шаг 5).
+- Старый стек `servers` снесён 2026-10-24 (Migration Plan, шаг 3); сеть `wallet-net` убрать после раздела 8.
 - Архивировать change после ревью: `/opsx:archive add-prod-test-environments`.
