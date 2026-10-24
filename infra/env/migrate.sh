@@ -11,7 +11,7 @@
 #
 # Примеры:
 #   infra/env/migrate.sh test wallet
-#   infra/env/migrate.sh test wallet ghcr.io/walletransactions/wallet-api:1.4.0-rc.1
+#   infra/env/migrate.sh test wallet ghcr.io/wallettransactions/wallet-api:1.4.0-rc.1
 #   infra/env/migrate.sh prod auth - version      # "-" — образ по умолчанию
 #
 # Как переносятся файлы: образ сервиса копирует /migrations во временный

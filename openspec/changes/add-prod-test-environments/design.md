@@ -68,7 +68,7 @@
 `compose.yaml` переписывается:
 - `name: wallet-${WALLET_ENV:?…}`. Без `WALLET_ENV` compose падает с понятной ошибкой,
   поэтому случайный запуск без контура невозможен;
-- `build:` удаляется; `image: ghcr.io/walletransactions/<сервис>:${<СЕРВИС>_TAG:?}`;
+- `build:` удаляется; `image: ghcr.io/wallettransactions/<сервис>:${<СЕРВИС>_TAG:?}`;
 - на хост публикуется только гейтвей: `${WALLET_GATEWAY_PORT:?}:8090`. Остальные `ports:` удаляются;
 - `env_file` и PEM-ключ берутся из `${WALLET_SECRETS_DIR}/…` вместо `../<сервис>/.env`;
 - сеть — `wallet-${WALLET_ENV}`, `external: true` (её создаёт `up.sh`, чтобы стек метрик
@@ -93,7 +93,7 @@
 - **Тег `vX.Y.Z-rc.N`.** Workflow сборки сервиса:
   - проверяет, что `VERSION` равен `X.Y.Z`;
   - собирает образ с `GIT_COMMIT`;
-  - публикует `ghcr.io/walletransactions/<сервис>:X.Y.Z-rc.N`.
+  - публикует `ghcr.io/wallettransactions/<сервис>:X.Y.Z-rc.N`.
 - **Тег `vX.Y.Z`.** Workflow ищет `git tag --points-at HEAD` вида `vX.Y.Z-rc.*` и берёт старший.
   Образ получает новый тег без пересборки:
   `docker buildx imagetools create -t …:X.Y.Z …:X.Y.Z-rc.N`.

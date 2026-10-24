@@ -113,7 +113,7 @@ prune_images() {
         kept=$((kept + 1))
         (( kept <= 3 )) && continue
         docker rmi "$(image_of "$svc" "$t")" >/dev/null 2>&1 || true
-    done < <(docker images "ghcr.io/walletransactions/$svc" --format '{{.Tag}}')
+    done < <(docker images "ghcr.io/wallettransactions/$svc" --format '{{.Tag}}')
 }
 
 deploy_infra() {
@@ -167,7 +167,7 @@ image="$(image_of "$service" "$image_tag")"
 echo "==> [$ENV_NAME] $service → $image_tag"
 docker pull -q "$image" >/dev/null || die "не удалось скачать $image"
 digest="$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$image" \
-    | grep "^ghcr.io/walletransactions/$service@" | head -n1)"
+    | grep "^ghcr.io/wallettransactions/$service@" | head -n1)"
 digest="${digest#*@}"
 [[ -n "$digest" ]] || die "у $image нет digest из registry"
 revision="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image" 2>/dev/null || true)"

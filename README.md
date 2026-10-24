@@ -75,7 +75,7 @@ docker по одному [`compose.yaml`](compose.yaml):
 | **prod** | `wallet-prod` | `http://<хост>:8090` | git-тег сервиса `vX.Y.Z` (тот же образ, что прошёл test) |
 | **test** | `wallet-test` | `http://<хост>:8091` | git-тег сервиса `vX.Y.Z-rc.N` |
 
-Образы собирает CI в `ghcr.io/walletransactions/<сервис>`; на хосте ничего не
+Образы собирает CI в `ghcr.io/wallettransactions/<сервис>`; на хосте ничего не
 собирается, `docker compose up --build` из рабочей папки больше не работает.
 Выкат по тегам делает Jenkins (`env-release-watch` → `env-deploy`), руками —
 `infra/env/up.sh <prod|test>`. Первый запуск, секреты, миграции, откат и

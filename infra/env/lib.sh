@@ -133,7 +133,7 @@ set_tag() {
 
 # image_of <сервис> <тег>
 image_of() {
-    echo "ghcr.io/walletransactions/$1:$2"
+    echo "ghcr.io/wallettransactions/$1:$2"
 }
 
 # log_history <сервис> <тег> <digest|commit> <итог> — строка в журнал выкатов

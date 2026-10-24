@@ -3,14 +3,14 @@
 ## 1. Хост
 
 - [ ] 1.1 Освободить место на `/`: `docker builder prune` и `docker image prune` (около 12 ГБ, D10). Проверка: `df -h /` показывает не меньше 20 ГБ свободно.
-- [ ] 1.2 Выполнить `docker login ghcr.io` токеном `read:packages` на хосте (D3). Проверка: `docker pull` любого опубликованного образа `ghcr.io/walletransactions/…` успешен (после 3.2; до этого проверяется `docker login` без ошибок).
+- [ ] 1.2 Выполнить `docker login ghcr.io` токеном `read:packages` на хосте (D3). Проверка: `docker pull` любого опубликованного образа `ghcr.io/wallettransactions/…` успешен (после 3.2; до этого проверяется `docker login` без ошибок).
 - [ ] 1.3 Включить в LM Studio «Serve on Local Network» и проверить доступ из контейнера: `docker run --rm --add-host host.docker.internal:host-gateway busybox:1.36 wget -qO- http://host.docker.internal:1234/v1/models`. Проверка: в ответе список моделей.
 
 ## 2. compose.yaml и скрипты контуров (wallet-infra)
 
 - [x] 2.1 Переписать `compose.yaml` под контуры (D2, D8, D10, D11):
   - `name: wallet-${WALLET_ENV:?}`;
-  - убрать `build:`, образы `ghcr.io/walletransactions/<сервис>:${<СЕРВИС>_TAG:?}`;
+  - убрать `build:`, образы `ghcr.io/wallettransactions/<сервис>:${<СЕРВИС>_TAG:?}`;
   - на хост только гейтвей `${WALLET_GATEWAY_PORT:?}:8090`, остальные `ports:` убрать;
   - `env_file` и PEM из `${WALLET_SECRETS_DIR}`;
   - сеть `wallet-${WALLET_ENV}` external, alias `<сервис>-${WALLET_ENV}`;
@@ -35,10 +35,10 @@
 ## 3. CI: образы в ghcr (репозитории сервисов)
 
 - [x] 3.1 Добавить `COPY migrations /migrations` в Containerfile google-auth, wallet-api, wallet-telegram и wallet-ai. Проверка: `docker run --rm --entrypoint ls <образ> /migrations` показывает `*.up.sql`. Собирать по одному сервису.
-- [ ] 3.2 Добавить в каждый из 7 сервисов `.github/workflows/release.yml` (тег `v*`; юнит-тесты — из `ci.yml` через `workflow_call`). У wallet-web завести `VERSION` и `GET /version` (как у C++-сервисов). Для тега `v*-rc.*`:
+- [x] 3.2 Добавить в каждый из 7 сервисов `.github/workflows/release.yml` (тег `v*`; юнит-тесты — из `ci.yml` через `workflow_call`). У wallet-web завести `VERSION` и `GET /version` (как у C++-сервисов). Для тега `v*-rc.*`:
   - проверка `VERSION == X.Y.Z`;
   - сборка с `GIT_COMMIT`;
-  - push `ghcr.io/walletransactions/<сервис>:X.Y.Z-rc.N`;
+  - push `ghcr.io/wallettransactions/<сервис>:X.Y.Z-rc.N`;
   - `permissions: packages: write`.
 
   Проверка: тег `v<VERSION>-rc.1` в google-auth публикует образ, его `/version` отдаёт версию и хэш.

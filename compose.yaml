@@ -125,7 +125,7 @@ services:
 
   google-auth:
     <<: *service
-    image: ghcr.io/walletransactions/google-auth:${GOOGLE_AUTH_TAG:?}
+    image: ghcr.io/wallettransactions/google-auth:${GOOGLE_AUTH_TAG:?}
     mem_limit: 64m
     env_file:
       - ${WALLET_SECRETS_DIR:?}/google-auth.env
@@ -156,7 +156,7 @@ services:
 
   wallet-web:
     <<: *service
-    image: ghcr.io/walletransactions/wallet-web:${WALLET_WEB_TAG:?}
+    image: ghcr.io/wallettransactions/wallet-web:${WALLET_WEB_TAG:?}
     mem_limit: 32m
     # Никакого env_file — nginx статики не читает переменные окружения, а
     # сама статика не содержит секретов/адресов бекендов (см. README).
@@ -175,7 +175,7 @@ services:
 
   wallet-api:
     <<: *service
-    image: ghcr.io/walletransactions/wallet-api:${WALLET_API_TAG:?}
+    image: ghcr.io/wallettransactions/wallet-api:${WALLET_API_TAG:?}
     mem_limit: 128m
     env_file:
       - ${WALLET_SECRETS_DIR}/wallet-api.env
@@ -207,7 +207,7 @@ services:
   # значением READER_POSTGRES_PASSWORD из db.env (свой у prod и test).
   wallet-report:
     <<: *service
-    image: ghcr.io/walletransactions/wallet-report:${WALLET_REPORT_TAG:?}
+    image: ghcr.io/wallettransactions/wallet-report:${WALLET_REPORT_TAG:?}
     mem_limit: 64m
     env_file:
       - ${WALLET_SECRETS_DIR}/wallet-report.env
@@ -241,7 +241,7 @@ services:
   # пусто (GPU один, design D8) — тогда /api/ai/status отвечает enabled=false.
   wallet-ai:
     <<: *service
-    image: ghcr.io/walletransactions/wallet-ai:${WALLET_AI_TAG:?}
+    image: ghcr.io/wallettransactions/wallet-ai:${WALLET_AI_TAG:?}
     mem_limit: 64m
     env_file:
       - ${WALLET_SECRETS_DIR}/wallet-ai.env
@@ -278,7 +278,7 @@ services:
   # Единственная точка входа контура на хосте: prod :8090, test :8091.
   wallet-gateway:
     <<: *service
-    image: ghcr.io/walletransactions/wallet-gateway:${WALLET_GATEWAY_TAG:?}
+    image: ghcr.io/wallettransactions/wallet-gateway:${WALLET_GATEWAY_TAG:?}
     mem_limit: 64m
     env_file:
       - ${WALLET_SECRETS_DIR}/wallet-gateway.env
@@ -322,7 +322,7 @@ services:
   # (TELEGRAM_POLL_TIMEOUT_SECS, 25 с), иначе SIGKILL посреди запроса.
   wallet-telegram:
     <<: *service
-    image: ghcr.io/walletransactions/wallet-telegram:${WALLET_TELEGRAM_TAG:?}
+    image: ghcr.io/wallettransactions/wallet-telegram:${WALLET_TELEGRAM_TAG:?}
     mem_limit: 64m
     stop_grace_period: 35s
     env_file:
