@@ -65,7 +65,9 @@ checkout'а нет — из репозитория, где лежит запущ
 **1. Хост (один раз):** `docker login ghcr.io` токеном GitHub с правом
 `read:packages` — образы в ghcr приватные.
 
-**2. Секреты.** Каталог 700, файлы 600 (`up.sh` проверяет права и не
+**2. Секреты.** Каталог 700, `*.env` 600, ключ `jwt_signing_key.pem` 644 —
+его читает google-auth в контейнере под своим uid, а посторонних не пускает
+каталог 700 (`up.sh` проверяет права и не
 стартует с другими):
 
 ```bash
@@ -75,7 +77,7 @@ install -m 600 infra/db/.env.example "$S/db.env"        # + заменить в�
 for s in google-auth wallet-api wallet-report wallet-ai wallet-gateway wallet-telegram; do
     install -m 600 "../$s/.env.example" "$S/$s.env"
 done
-openssl genrsa -out "$S/jwt_signing_key.pem" 2048 && chmod 600 "$S/jwt_signing_key.pem"
+openssl genrsa -out "$S/jwt_signing_key.pem" 2048 && chmod 644 "$S/jwt_signing_key.pem"
 ```
 
 Что вписать руками:

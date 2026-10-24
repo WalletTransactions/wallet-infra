@@ -30,7 +30,7 @@
 - [x] 2.4 Написать `infra/env/migrate.sh <env> <база> <образ>` по D4: образ сервиса копирует `/migrations` во временный docker-том, затем `migrate/migrate:v4.18.3 up` в сети контура ролью мигратора; после базы wallet — пароль `wallet_reader` из `READER_POSTGRES_PASSWORD`. Удалить `infra/db/migrate.sh`. Проверка: `bash -n`; на test после 5.3 повторный запуск — no change, wallet-report подключается с паролем из `db.env`, а со строкой `wallet_reader` — нет.
 - [x] 2.5 Добавить в `infra/db/init-db.sh` роль `dumper` с `pg_read_all_data` (D9). Задокументировать роль и правило expand/contract для миграций в `infra/db/README.md`. Проверка: на чистом томе test `\du` показывает `dumper`, а `pg_dump` ею проходит по всем четырём базам.
 - [x] 2.6 Удалить `infra/k8s/` целиком. Проверка: в репозитории нет ссылок на `infra/k8s`, `apply.sh`, `wallet-transaction` (`git grep`).
-- [ ] 2.7 Написать `infra/env/README.md`: контуры, порты, раскладка секретов и состояния, `up.sh`, доступ к db через `docker exec`. Проверка: по README test поднимается с нуля без других источников.
+- [x] 2.7 Написать `infra/env/README.md`: контуры, порты, раскладка секретов и состояния, `up.sh`, доступ к db через `docker exec`. Проверка: по README test поднимается с нуля без других источников.
 
 ## 3. CI: образы в ghcr (репозитории сервисов)
 
@@ -73,10 +73,10 @@
 
 - [ ] 5.1 Зарегистрировать test-бота в BotFather. Собрать `~/.config/wallet-secrets/test/` с новыми значениями (D7): пароли БД (включая `READER_POSTGRES_PASSWORD`), RSA-ключ, токен бота, `TELEGRAM_SERVICE_SECRET` (одинаковый в `google-auth.env` и `wallet-telegram.env`), `REDIRECT_URL` на `:8091`. Каталог 700, файлы 600. Проверка: `stat` показывает права, и ни одно значение не совпадает с текущими `.env` (сравнение хэшей).
 - [ ] 5.2 Добавить redirect URI `http://localhost:8091/auth/google/callback` в OAuth-клиент Google Cloud Console. Проверка: в Console у клиента два URI.
-- [ ] 5.3 Поднять test: `tags.env` с rc всех сервисов из 3.2, миграции четырёх баз, `up.sh test`. Проверка:
+- [x] 5.3 Поднять test: `tags.env` с rc всех сервисов из 3.2, миграции четырёх баз, `up.sh test`. Проверка:
   - все сервисы `wallet-test` healthy;
   - `curl :8091/healthz` — 200;
-  - `/api/ai/status` — `enabled=false`.
+  - `/api/ai/status` — `enabled` соответствует `LLM_URL` в `infra/env/test.env` (сейчас ИИ включён явно, design D8).
 - [ ] 5.4 Ручной сценарий в test:
   - вход через Google на `:8091`;
   - создание кошелька;

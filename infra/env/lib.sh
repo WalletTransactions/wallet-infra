@@ -62,17 +62,22 @@ env_init() {
     fi
 }
 
-# env_check_secrets — все файлы секретов на месте, каталог 700, файлы 600.
+# env_check_secrets — все файлы секретов на месте, каталог 700, *.env 600.
+# jwt_signing_key.pem — 644: его bind-монтирует в google-auth, а там процесс
+# работает под appuser (uid 999), не владельцем файла. Других пользователей
+# хоста к нему всё равно не пускает каталог 700.
 env_check_secrets() {
-    local f mode
+    local f mode want
     [[ -d "$SECRETS_DIR" ]] || die "нет каталога секретов $SECRETS_DIR (см. infra/env/README.md)"
     mode="$(stat -c %a "$SECRETS_DIR")"
     [[ "$mode" == "700" ]] || die "права $SECRETS_DIR — $mode, нужно 700"
     for f in db.env google-auth.env wallet-api.env wallet-report.env wallet-ai.env \
              wallet-gateway.env wallet-telegram.env jwt_signing_key.pem; do
         [[ -f "$SECRETS_DIR/$f" ]] || die "нет $SECRETS_DIR/$f"
+        want=600
+        [[ "$f" == *.pem ]] && want=644
         mode="$(stat -c %a "$SECRETS_DIR/$f")"
-        [[ "$mode" == "600" ]] || die "права $SECRETS_DIR/$f — $mode, нужно 600"
+        [[ "$mode" == "$want" ]] || die "права $SECRETS_DIR/$f — $mode, нужно $want (chmod $want)"
     done
 }
 
