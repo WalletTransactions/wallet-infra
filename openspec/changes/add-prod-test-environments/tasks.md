@@ -2,9 +2,9 @@
 
 ## 1. Хост
 
-- [ ] 1.1 Освободить место на `/`: `docker builder prune` и `docker image prune` (около 12 ГБ, D10). Проверка: `df -h /` показывает не меньше 20 ГБ свободно.
-- [ ] 1.2 Выполнить `docker login ghcr.io` токеном `read:packages` на хосте (D3). Проверка: `docker pull` любого опубликованного образа `ghcr.io/wallettransactions/…` успешен (после 3.2; до этого проверяется `docker login` без ошибок).
-- [ ] 1.3 Включить в LM Studio «Serve on Local Network» и проверить доступ из контейнера: `docker run --rm --add-host host.docker.internal:host-gateway busybox:1.36 wget -qO- http://host.docker.internal:1234/v1/models`. Проверка: в ответе список моделей.
+- [x] 1.1 Освободить место на `/`: `docker builder prune` и `docker image prune` (около 12 ГБ, D10). Проверка: `df -h /` показывает не меньше 20 ГБ свободно.
+- [x] 1.2 Выполнить `docker login ghcr.io` токеном `read:packages` на хосте (D3). Проверка: `docker pull` любого опубликованного образа `ghcr.io/wallettransactions/…` успешен (после 3.2; до этого проверяется `docker login` без ошибок).
+- [x] 1.3 Включить в LM Studio «Serve on Local Network» и проверить доступ из контейнера: `docker run --rm --add-host host.docker.internal:host-gateway busybox:1.36 wget -qO- http://host.docker.internal:1234/v1/models`. Проверка: в ответе список моделей.
 
 ## 2. compose.yaml и скрипты контуров (wallet-infra)
 
