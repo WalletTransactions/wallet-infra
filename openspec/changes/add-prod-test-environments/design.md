@@ -96,7 +96,9 @@
   - публикует `ghcr.io/wallettransactions/<сервис>:X.Y.Z-rc.N`.
 - **Тег `vX.Y.Z`.** Workflow ищет `git tag --points-at HEAD` вида `vX.Y.Z-rc.*` и берёт старший.
   Образ получает новый тег без пересборки:
-  `docker buildx imagetools create -t …:X.Y.Z …:X.Y.Z-rc.N`.
+  `skopeo copy --preserve-digests docker://…:X.Y.Z-rc.N docker://…:X.Y.Z`.
+  Не `docker buildx imagetools create`: одиночный манифест он заворачивает в новый
+  индекс с другим digest (проверено на google-auth 0.1.0), и гейт prod его не узнаёт.
   Если rc не найден, workflow падает.
 - **Pull на хосте.** `docker login ghcr.io` токеном `read:packages` один раз на хосте
   (и в контейнере Jenkins — тот же `~/.docker/config.json`).
