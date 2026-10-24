@@ -71,7 +71,7 @@
 
 ## 5. Контур test
 
-- [ ] 5.1 Зарегистрировать test-бота в BotFather. Собрать `~/.config/wallet-secrets/test/` с новыми значениями (D7): пароли БД (включая `READER_POSTGRES_PASSWORD`), RSA-ключ, токен бота, `TELEGRAM_SERVICE_SECRET` (одинаковый в `google-auth.env` и `wallet-telegram.env`), `REDIRECT_URL` на `:8091`. Каталог 700, файлы 600. Проверка: `stat` показывает права, и ни одно значение не совпадает с текущими `.env` (сравнение хэшей).
+- [x] 5.1 Зарегистрировать test-бота в BotFather. Собрать `~/.config/wallet-secrets/test/` с новыми значениями (D7): пароли БД (включая `READER_POSTGRES_PASSWORD`), RSA-ключ, токен бота, `TELEGRAM_SERVICE_SECRET` (одинаковый в `google-auth.env` и `wallet-telegram.env`), `REDIRECT_URL` на `:8091`. Каталог 700, файлы 600. Проверка: `stat` показывает права, и ни одно значение не совпадает с текущими `.env` (сравнение хэшей).
 - [x] 5.2 Добавить redirect URI `http://localhost:8091/auth/google/callback` в OAuth-клиент Google Cloud Console. Проверка: в Console у клиента два URI.
 - [x] 5.3 Поднять test: `tags.env` с rc всех сервисов из 3.2, миграции четырёх баз, `up.sh test`. Проверка:
   - все сервисы `wallet-test` healthy;
