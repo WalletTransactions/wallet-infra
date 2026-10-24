@@ -3,7 +3,7 @@
 # гасится сам по себе, общей сети с приложением не нужно — Fluent Bit читает
 # journald хоста, а не ходит к контейнерам по сети.
 #
-# Запуск (из каталога servers/):
+# Запуск (из каталога wallet-infra/):
 #   docker compose -f infra/logging/compose.yaml up -d
 #
 # Открывать в браузере: http://localhost:15601 (OpenSearch Dashboards).
@@ -105,7 +105,8 @@ services:
   # journal этого Linux-хоста.
   #
   # Какие именно контейнеры попадают в индекс — вайтлист по CONTAINER_NAME в
-  # fluent-bit.conf (префикс "servers-" = compose-проект приложения).
+  # fluent-bit.conf (префиксы wallet-prod-/wallet-test- = compose-проекты
+  # контуров); поле env — контур, по тому же префиксу.
   fluent-bit:
     image: docker.io/fluent/fluent-bit:3.1
     restart: unless-stopped

@@ -122,7 +122,7 @@
 
 ## 8. Наблюдаемость
 
-- [ ] 8.1 Fluent Bit: белый список префиксов `wallet-prod-` и `wallet-test-` вместо `servers-`, поле `env` из префикса (D11). Проверка: в OpenSearch поиск `env:test` находит только записи `wallet-test`.
+- [x] 8.1 Fluent Bit: белый список префиксов `wallet-prod-` и `wallet-test-` вместо `servers-`, поле `env` из префикса (D11). Проверка: в OpenSearch поиск `env:test` находит только записи `wallet-test`.
 - [x] 8.2 Prometheus: сети `wallet-prod` и `wallet-test` как external вместо `wallet-net`, scrape по alias'ам `<сервис>-<env>` с меткой `env`. Проверка: `up{job="wallet-api"}` возвращает две серии с `env="prod"` и `env="test"`.
 - [x] 8.3 Экспортёры postgres и redis — по одному на контур, с меткой `env`. Проверка: в Prometheus цели экспортёров обоих контуров up.
 - [x] 8.4 Дашборды Grafana: переменная `env` во всех панелях. Проверка: при `env=test` панели показывают только test.
