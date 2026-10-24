@@ -103,7 +103,7 @@
 
 ## 7. Переключение prod
 
-- [ ] 7.1 Собрать `~/.config/wallet-secrets/prod/` с новыми значениями (D7): пароли БД (включая `READER_POSTGRES_PASSWORD`), RSA-ключ, `TELEGRAM_SERVICE_SECRET`; токен @WalletTransaction_bot и Google OAuth — прежние; `REDIRECT_URL` на `:8090`. Каталог 700, файлы 600. Проверка: `stat` показывает права, ни один пароль и ключ не совпадает с test.
+- [x] 7.1 Собрать `~/.config/wallet-secrets/prod/` с новыми значениями (D7): пароли БД (включая `READER_POSTGRES_PASSWORD`), RSA-ключ, `TELEGRAM_SERVICE_SECRET`; токен @WalletTransaction_bot и Google OAuth — прежние; `REDIRECT_URL` на `:8090`. Каталог 700, `*.env` 600, ключ 644. Проверка: `stat` показывает права, ни один пароль и ключ не совпадает с test.
 - [ ] 7.2 Подготовить финальные теги `vX.Y.Z` всех сервисов на коммитах rc, прошедших 5.3 и 5.4. Проверка: digest каждого финального образа есть в `test/verified`.
 - [ ] 7.3 Поднять prod по Migration Plan, шаг 4 (старый стек `servers` уже снесён):
   1. `tags.env` prod с финальными тегами;
