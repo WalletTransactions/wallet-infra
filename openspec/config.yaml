@@ -1,0 +1,27 @@
+schema: spec-driven
+
+context: |
+  Все артефакты OpenSpec пишутся на русском.
+  wallet-infra — репозиторий стека WalletTransactions: compose.yaml (dev-стек, проект "servers"),
+  infra/k8s (обычные YAML + apply.sh), infra/db (роли Postgres, init-db.sh, migrate.sh),
+  infra/logging и infra/monitoring (отдельные compose-стеки). Код сервисов — в соседних
+  репозиториях организации WalletTransactions (google-auth, wallet-api, wallet-report,
+  wallet-ai, wallet-gateway, wallet-web, wallet-telegram); миграции каждой базы лежат там же.
+  Всё крутится на одной машине разработчика: Linux, 12 ядер, 14 ГБ RAM, мало места на /,
+  рабочая папка на NTFS (нет прав Unix). LLM — LM Studio на хосте (GTX 1070 8 ГБ, один GPU).
+  Движок контейнеров — только docker. Сборка C++-сервисов — по одной за раз (параллельная
+  сборка вешает хост). CI: GitHub Actions собирает образы; выкат и миграции — Jenkins
+  (BuildPlatform, вне git, общая логика в jobs/lib/*.sh, flock на выкатах).
+  LAN-only: наружу ничего не публикуется. Секреты не хранятся в git.
+
+rules:
+  specs:
+    - Каждое требование — с хотя бы одним сценарием WHEN/THEN
+    - Описывать наблюдаемое поведение стенда (адреса, изоляция, порядок выката), а не конкретные YAML
+  design:
+    - Явно указывать правки вне wallet-infra (сервисы, BuildPlatform, GitHub Actions, Android-клиент)
+    - Оценивать расход RAM/диска на хосте и влияние на единственный GPU
+  tasks:
+    - Каждая задача заканчивается проверкой на живом стенде (kubectl, curl через гейтвей)
+    - Изменение запуска стека сопровождается правкой README.md (корневого и infra/k8s)
+    - Никаких секретов в логах выката (без cat .env, set -x рядом с секретами)

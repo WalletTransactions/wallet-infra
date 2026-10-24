@@ -59,53 +59,39 @@ google-auth, раздел "Версия", там же весь механизм 
 
 | Папка | Что внутри |
 | --- | --- |
-| `infra/db` | Конфиг инстанса Postgres: три + две служебные роли, `init-db.sh`, версионированные миграции (`migrations/{auth,wallet,perf}`) и `migrate.sh` — см. [infra/db/README.md](infra/db/README.md). `perf` — история прогонов нагрузочного контура (`test_run`/`test_result`, читается дашбордом Grafana "Perf History", см. `wallet-report/loadtest/README.md`) |
-| `infra/k8s` | Манифесты для локального кластера (minikube/kind/Rancher Desktop), аналог `compose.yaml` — см. [infra/k8s/README.md](infra/k8s/README.md) |
+| `infra/env` | Контуры prod и test: настройки (`prod.env`, `test.env`), `up.sh`, `migrate.sh`, выкат — см. [infra/env/README.md](infra/env/README.md) |
+| `infra/db` | Конфиг инстанса Postgres: роли, `init-db.sh`, миграции базы `perf` — см. [infra/db/README.md](infra/db/README.md). `perf` — история прогонов нагрузочного контура (`test_run`/`test_result`, читается дашбордом Grafana "Perf History", см. `wallet-report/loadtest/README.md`) |
 | `infra/logging` | Конфиг Fluent Bit и сохранённые объекты OpenSearch Dashboards для дев-стенда логов — отдельный стек `wallet-logging`, [`infra/logging/compose.yaml`](infra/logging/compose.yaml) |
 | `infra/monitoring` | Конфиг Prometheus + дашборд Grafana для дев-стенда метрик (CPU/RAM/RPS, latency p50/p95/p99, DB connections, DB latency, сеть, errors) — отдельный стек `wallet-monitoring`, [`infra/monitoring/compose.yaml`](infra/monitoring/compose.yaml), комментарии там же и в `infra/monitoring/prometheus.yml` |
 | `infra/diagrams` | PlantUML-схемы (`components.puml`, `sequence.puml`, `sync-sequence.puml`) — см. [infra/diagrams/README.md](infra/diagrams/README.md) |
 
 ## Запуск
 
-Локально через Docker Compose — весь стек описан в
-[`compose.yaml`](compose.yaml) (комментарии в шапке файла — порядок первого
-запуска, три Postgres-роли, зачем `--env-file`). Коротко:
+Стек работает в двух постоянных контурах на одной машине, оба — compose-проекты
+docker по одному [`compose.yaml`](compose.yaml):
+
+| Контур | Проект | Адрес | Что катится |
+| --- | --- | --- | --- |
+| **prod** | `wallet-prod` | `http://<хост>:8090` | git-тег сервиса `vX.Y.Z` (тот же образ, что прошёл test) |
+| **test** | `wallet-test` | `http://<хост>:8091` | git-тег сервиса `vX.Y.Z-rc.N` |
+
+Образы собирает CI в `ghcr.io/walletransactions/<сервис>`; на хосте ничего не
+собирается, `docker compose up --build` из рабочей папки больше не работает.
+Выкат по тегам делает Jenkins (`env-release-watch` → `env-deploy`), руками —
+`infra/env/up.sh <prod|test>`. Первый запуск, секреты, миграции, откат и
+перезаливка test — [infra/env/README.md](infra/env/README.md).
+
+Снаружи открыт только гейтвей контура; к db и redis — `docker exec`
+(см. [infra/db/README.md](infra/db/README.md), «Подключение к базе контура»).
+
+Логи и метрики — общие на оба контура стеки `wallet-logging` и
+`wallet-monitoring` (контур различается полем/меткой `env`):
 
 ```bash
-cp infra/db/.env.example infra/db/.env
-cp google-auth/.env.example google-auth/.env      # + Google OAuth креды
-cp wallet-api/.env.example wallet-api/.env
-cp wallet-report/.env.example wallet-report/.env
-cp wallet-gateway/.env.example wallet-gateway/.env
-openssl genrsa -out google-auth/jwt_signing_key.pem 2048
-docker compose --env-file infra/db/.env up -d db         # сначала только db...
-bash infra/db/migrate.sh auth up                          # ...накатить схему...
-bash infra/db/migrate.sh wallet up
-docker compose --env-file infra/db/.env up -d --build     # ...и уже потом всё остальное
+docker compose -f infra/logging/compose.yaml up -d      # OpenSearch Dashboards: http://localhost:15601
+docker compose -f infra/monitoring/compose.yaml up -d   # Grafana: http://localhost:13000, Prometheus: http://localhost:19090
 ```
 
-Открыть `http://localhost:8090` (гейтвей).
-
-Логи и метрики — два отдельных стека (свои compose-проекты, в Docker Desktop
-видны как `wallet-logging` и `wallet-monitoring`), поднимаются после
-приложения — метрикам нужна его сеть `wallet-net`:
-
-```bash
-docker compose -f infra/logging/compose.yaml up -d                             # OpenSearch Dashboards: http://localhost:15601
-docker compose -f infra/monitoring/compose.yaml --env-file infra/db/.env up -d  # Grafana: http://localhost:13000
-```
-
-Метрики (Grafana поверх Prometheus — CPU/RAM/RPS/latency p50-p99/DB
-connections/DB latency/сеть/errors, см. `infra/monitoring`): дашборд
-"Wallet Transactions — Overview" заводится сам при первом старте —
-`http://localhost:13000` (admin/admin, смените пароль при первом входе).
-Сам Prometheus (PromQL-консоль, `/targets`) — `http://localhost:19090`.
-DB-метрики (connections, латентность запросов через `pg_stat_statements`)
-требуют роль `MONITORING_POSTGRES_USER`/`MONITORING_POSTGRES_PASSWORD` в
-`infra/db/.env` (см. `.env.example`) — на уже существующем volume `db-data`
-`init-db.sh` сам не перезапустится (см. его шапку), накатите вручную:
-`docker exec -i <контейнер db> sh < infra/db/init-db.sh`, затем пересоздайте
-`db` с новой командой запуска: `docker compose --env-file infra/db/.env up -d --build db`.
-
-Для локального кластера — [infra/k8s/README.md](infra/k8s/README.md).
+Дашборд Grafana "Wallet Transactions — Overview" заводится сам при первом
+старте (admin/admin, смените пароль при первом входе).
 
