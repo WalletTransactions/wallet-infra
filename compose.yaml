@@ -34,7 +34,8 @@
 # (infra/monitoring) мог к ней подключиться в любом порядке запуска. Внутри
 # сети у сервисов обычные имена (db, google-auth, ...) для соседей и alias
 # <сервис>-<env> для Prometheus, который сидит в сетях обоих контуров
-# (design D11). На хост публикуется ТОЛЬКО гейтвей; к db/redis — docker exec.
+# (design D11). На хост публикуются гейтвей и порт db — последний только на
+# 127.0.0.1 (для DBeaver/psql с этой машины); redis — только docker exec.
 #
 # Логи — journald (logging ниже): Fluent Bit (infra/logging) берёт из него
 # контейнеры с префиксом wallet-prod-/wallet-test- и ставит поле env.
@@ -99,6 +100,11 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    # Порт для DBeaver/psql — ТОЛЬКО на 127.0.0.1 этой машины (prod 15555,
+    # test 15432, см. infra/env/<env>.env): из LAN база не видна. Вход — по
+    # паролям ролей из db.env контура (pg_hba для не-localhost — scram).
+    ports:
+      - "127.0.0.1:${WALLET_DB_PORT:?}:5432"
     networks:
       wallet:
         aliases: ["db-${WALLET_ENV}"]

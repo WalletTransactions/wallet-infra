@@ -8,15 +8,16 @@ dev-стек рядом — `openspec/changes/add-prod-test-environments/design.
 | --- | --- | --- |
 | Проект compose | `wallet-prod` | `wallet-test` |
 | Гейтвей на хосте | `:8090` | `:8091` |
+| Postgres (только `127.0.0.1`) | `:15555` | `:15432` |
 | Сеть docker | `wallet-prod` | `wallet-test` |
 | Тома | `wallet-prod_db-data`, `wallet-prod_redis-data` | `wallet-test_db-data`, `wallet-test_redis-data` |
 | Какой git-тег катится | `vX.Y.Z` (только digest, прошедший test) | `vX.Y.Z-rc.N` |
 | Telegram-бот | @WalletTransaction_bot | свой test-бот |
-| ИИ (LM Studio) | включён | выключен (`LLM_URL=` пусто) |
+| ИИ (LM Studio) | включён | включён явно (`infra/env/test.env`) |
 | При нехватке памяти хоста | убивается последним (`oom_score_adj` −900) | первым (500) |
 
-Больше ничего наружу не публикуется: к db и redis — `docker exec`
-(`../db/README.md`, «Подключение к базе контура»). Контейнеры разных
+Postgres — только на `127.0.0.1`, из LAN не виден (`../db/README.md`,
+«Подключение к базе контура»); redis наружу не публикуется — `docker exec`. Контейнеры разных
 контуров друг друга не видят — у каждого своя сеть.
 
 ## Что откуда берётся

@@ -81,7 +81,8 @@ docker по одному [`compose.yaml`](compose.yaml):
 `infra/env/up.sh <prod|test>`. Первый запуск, секреты, миграции, откат и
 перезаливка test — [infra/env/README.md](infra/env/README.md).
 
-Снаружи открыт только гейтвей контура; к db и redis — `docker exec`
+Снаружи открыт только гейтвей контура; Postgres — только на `127.0.0.1` этой машины
+(prod `:15555`, test `:15432`); redis — `docker exec`
 (см. [infra/db/README.md](infra/db/README.md), «Подключение к базе контура»).
 
 Логи и метрики — общие на оба контура стеки `wallet-logging` и

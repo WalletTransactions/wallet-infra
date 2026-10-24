@@ -140,20 +140,21 @@ bash infra/env/migrate.sh test perf                  # infra/db/migrations/perf
 
 ## Подключение к базе контура
 
-Порты Postgres на хост не публикуются (спека deployment-environments,
-«БД не торчит наружу»). Посмотреть данные — через `docker exec`:
+Postgres каждого контура опубликован **только на `127.0.0.1` этой машины**
+(из LAN не виден): DBeaver/psql подключаются напрямую.
+
+| Контур | Адрес |
+| --- | --- |
+| prod | `127.0.0.1:15555` |
+| test | `127.0.0.1:15432` |
+
+Логин и пароль — роль нужной базы из `db.env` контура
+(`~/.config/wallet-secrets/<env>/db.env`). Для «просто посмотреть» лучше
+app-роль или `wallet_reader` (только SELECT); мигратор видит и может менять
+всё. Без пароля — изнутри контейнера:
 
 ```bash
 docker exec -it wallet-test-db-1 sh -c 'psql -U "$POSTGRES_USER" -d wallet_api'
 ```
 
-Для GUI-клиента (DBeaver и т.п.) — временный туннель только на localhost,
-закрывается вместе с контейнером:
-
-```bash
-docker run --rm -it --network wallet-test -p 127.0.0.1:15432:5432 \
-    alpine/socat tcp-listen:5432,fork,reuseaddr tcp-connect:db:5432
-```
-
-Логин и пароль — app-роль нужной базы из `db.env` контура; мигратор видит
-и может менять всё, для «просто посмотреть» лучше app-роль.
+Redis наружу не публикуется: `docker exec -it wallet-<env>-redis-1 redis-cli`.

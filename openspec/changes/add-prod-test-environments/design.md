@@ -190,7 +190,9 @@ Google OAuth-клиент общий: в Console добавляется втор
 
 ### D8. Сеть и LLM
 - **Сеть.** У каждого контура своя bridge-сеть `wallet-<env>`. Контейнеры разных контуров
-  друг друга не видят. На хост публикуется только гейтвей; к db и redis — `docker exec`.
+  друг друга не видят. На хост публикуются гейтвей и Postgres — последний только на
+  `127.0.0.1` (prod 15555, test 15432) для DBeaver/psql с этой машины, вход по паролям ролей
+  из `db.env` (решение владельца 2026-10-24). Redis — только `docker exec`.
 - **LM Studio.** wallet-ai prod ходит по `LLM_URL=http://host.docker.internal:1234/v1`
   (`extra_hosts: host-gateway` уже есть). LM Studio должен слушать не только `127.0.0.1`.
 - **LLM в test.** По умолчанию `LLM_URL` в test пуст, поэтому `enabled=false`. GPU один:
