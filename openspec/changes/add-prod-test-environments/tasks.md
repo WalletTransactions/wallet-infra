@@ -72,12 +72,12 @@
 ## 5. Контур test
 
 - [ ] 5.1 Зарегистрировать test-бота в BotFather. Собрать `~/.config/wallet-secrets/test/` с новыми значениями (D7): пароли БД (включая `READER_POSTGRES_PASSWORD`), RSA-ключ, токен бота, `TELEGRAM_SERVICE_SECRET` (одинаковый в `google-auth.env` и `wallet-telegram.env`), `REDIRECT_URL` на `:8091`. Каталог 700, файлы 600. Проверка: `stat` показывает права, и ни одно значение не совпадает с текущими `.env` (сравнение хэшей).
-- [ ] 5.2 Добавить redirect URI `http://localhost:8091/auth/google/callback` в OAuth-клиент Google Cloud Console. Проверка: в Console у клиента два URI.
+- [x] 5.2 Добавить redirect URI `http://localhost:8091/auth/google/callback` в OAuth-клиент Google Cloud Console. Проверка: в Console у клиента два URI.
 - [x] 5.3 Поднять test: `tags.env` с rc всех сервисов из 3.2, миграции четырёх баз, `up.sh test`. Проверка:
   - все сервисы `wallet-test` healthy;
   - `curl :8091/healthz` — 200;
   - `/api/ai/status` — `enabled` соответствует `LLM_URL` в `infra/env/test.env` (сейчас ИИ включён явно, design D8).
-- [ ] 5.4 Ручной сценарий в test:
+- [x] 5.4 Ручной сценарий в test:
   - вход через Google на `:8091`;
   - создание кошелька;
   - привязка test-бота и команда ему.
@@ -104,8 +104,8 @@
 ## 7. Переключение prod
 
 - [x] 7.1 Собрать `~/.config/wallet-secrets/prod/` с новыми значениями (D7): пароли БД (включая `READER_POSTGRES_PASSWORD`), RSA-ключ, `TELEGRAM_SERVICE_SECRET`; токен @WalletTransaction_bot и Google OAuth — прежние; `REDIRECT_URL` на `:8090`. Каталог 700, `*.env` 600, ключ 644. Проверка: `stat` показывает права, ни один пароль и ключ не совпадает с test.
-- [ ] 7.2 Подготовить финальные теги `vX.Y.Z` всех сервисов на коммитах rc, прошедших 5.3 и 5.4. Проверка: digest каждого финального образа есть в `test/verified`.
-- [ ] 7.3 Поднять prod по Migration Plan, шаг 4 (старый стек `servers` уже снесён):
+- [x] 7.2 Подготовить финальные теги `vX.Y.Z` всех сервисов на коммитах rc, прошедших 5.3 и 5.4. Проверка: digest каждого финального образа есть в `test/verified`.
+- [x] 7.3 Поднять prod по Migration Plan, шаг 4 (старый стек `servers` уже снесён):
   1. `tags.env` prod с финальными тегами;
   2. `up.sh prod` — миграции четырёх баз на пустых томах, затем сервисы;
   3. smoke.
