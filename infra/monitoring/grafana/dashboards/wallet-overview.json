@@ -8,6 +8,23 @@
   "schemaVersion": 39,
   "version": 1,
   "tags": ["wallet-transactions"],
+  "templating": {
+    "list": [
+      {
+        "name": "env",
+        "label": "Контур",
+        "type": "custom",
+        "query": "prod,test",
+        "current": { "text": "prod", "value": "prod" },
+        "options": [
+          { "selected": true, "text": "prod", "value": "prod" },
+          { "selected": false, "text": "test", "value": "test" }
+        ],
+        "multi": false,
+        "includeAll": false
+      }
+    ]
+  },
   "panels": [
     { "id": 1, "type": "row", "title": "HTTP — RPS / latency / errors (google-auth, wallet-api, wallet-report, wallet-gateway)",
       "gridPos": { "x": 0, "y": 0, "w": 24, "h": 1 }, "collapsed": false, "panels": [] },
@@ -17,7 +34,7 @@
       "gridPos": { "x": 0, "y": 1, "w": 12, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
-      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(http_requests_total[1m])) by (job)", "legendFormat": "{{job}}" } ] },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(http_requests_total{env=~\"$env\"}[1m])) by (job)", "legendFormat": "{{job}}" } ] },
 
     { "id": 3, "type": "timeseries", "title": "Errors/sec по сервису (4xx / 5xx)",
       "description": "Отдельно клиентские (4xx) и серверные (5xx) ошибки — sum(rate(http_requests_total{status=~\"4..\"|\"5..\"}[1m])) by (job, status_class).",
@@ -25,8 +42,8 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
       "targets": [
-        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "refId": "A", "expr": "sum(rate(http_requests_total{status=~\"5..\"}[1m])) by (job)", "legendFormat": "{{job}} 5xx" },
-        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "refId": "B", "expr": "sum(rate(http_requests_total{status=~\"4..\"}[1m])) by (job)", "legendFormat": "{{job}} 4xx" }
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "refId": "A", "expr": "sum(rate(http_requests_total{env=~\"$env\", status=~\"5..\"}[1m])) by (job)", "legendFormat": "{{job}} 5xx" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "refId": "B", "expr": "sum(rate(http_requests_total{env=~\"$env\", status=~\"4..\"}[1m])) by (job)", "legendFormat": "{{job}} 4xx" }
       ] },
 
     { "id": 4, "type": "timeseries", "title": "Latency p50 по сервису",
@@ -34,21 +51,21 @@
       "gridPos": { "x": 0, "y": 9, "w": 8, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
-      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.50, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, job))", "legendFormat": "{{job}}" } ] },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.50, sum(rate(http_request_duration_seconds_bucket{env=~\"$env\"}[5m])) by (le, job))", "legendFormat": "{{job}}" } ] },
 
     { "id": 5, "type": "timeseries", "title": "Latency p95 по сервису",
       "description": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, job)).",
       "gridPos": { "x": 8, "y": 9, "w": 8, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
-      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, job))", "legendFormat": "{{job}}" } ] },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{env=~\"$env\"}[5m])) by (le, job))", "legendFormat": "{{job}}" } ] },
 
     { "id": 6, "type": "timeseries", "title": "Latency p99 по сервису",
       "description": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, job)).",
       "gridPos": { "x": 16, "y": 9, "w": 8, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
-      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, job))", "legendFormat": "{{job}}" } ] },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{env=~\"$env\"}[5m])) by (le, job))", "legendFormat": "{{job}}" } ] },
 
     { "id": 10, "type": "row", "title": "Контейнеры — CPU / RAM / сеть (cAdvisor)",
       "gridPos": { "x": 0, "y": 17, "w": 24, "h": 1 }, "collapsed": false, "panels": [] },
@@ -116,14 +133,14 @@
       "gridPos": { "x": 0, "y": 44, "w": 12, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
-      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "pg_stat_database_numbackends{datname=~\"google_auth|wallet_api\"}", "legendFormat": "{{datname}}" } ] },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "pg_stat_database_numbackends{env=~\"$env\", datname=~\"google_auth|wallet_api\"}", "legendFormat": "{{datname}}" } ] },
 
     { "id": 32, "type": "timeseries", "title": "Средняя латентность запроса, по базе",
       "description": "sum(rate(pg_stat_statements_seconds_total[5m])) by (datname) / sum(rate(pg_stat_statements_calls_total[5m])) by (datname). Точные имена метрик зависят от версии postgres_exporter — сверьте с `curl postgres-exporter:9187/metrics | grep pg_stat_statements` и поправьте запрос, если экспортёр называет их иначе.",
       "gridPos": { "x": 12, "y": 44, "w": 12, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
-      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(pg_stat_statements_seconds_total[5m])) by (datname) / sum(rate(pg_stat_statements_calls_total[5m])) by (datname)", "legendFormat": "{{datname}}" } ] },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(pg_stat_statements_seconds_total{env=~\"$env\"}[5m])) by (datname) / sum(rate(pg_stat_statements_calls_total{env=~\"$env\"}[5m])) by (datname)", "legendFormat": "{{datname}}" } ] },
 
     { "id": 33, "type": "timeseries", "title": "Postgres — CPU контейнера",
       "description": "sum(rate(container_cpu_usage_seconds_total{image=~\".*postgres.*\"}[1m])) by (image) * 100 — CPU самого процесса postgres (см. cAdvisor выше), не то же самое, что латентность/соединения из postgres_exporter рядом.",
@@ -157,21 +174,21 @@
       "gridPos": { "x": 0, "y": 61, "w": 8, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
-      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "redis_connected_clients", "legendFormat": "clients" } ] },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "redis_connected_clients{env=~\"$env\"}", "legendFormat": "clients" } ] },
 
     { "id": 42, "type": "timeseries", "title": "Используемая память",
       "description": "redis_memory_used_bytes.",
       "gridPos": { "x": 8, "y": 61, "w": 8, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "bytes", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
-      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "redis_memory_used_bytes", "legendFormat": "used" } ] },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "redis_memory_used_bytes{env=~\"$env\"}", "legendFormat": "used" } ] },
 
     { "id": 43, "type": "timeseries", "title": "Команды/сек",
       "description": "rate(redis_commands_processed_total[1m]).",
       "gridPos": { "x": 16, "y": 61, "w": 8, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "ops", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
-      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "rate(redis_commands_processed_total[1m])", "legendFormat": "ops/sec" } ] },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "rate(redis_commands_processed_total{env=~\"$env\"}[1m])", "legendFormat": "ops/sec" } ] },
 
     { "id": 50, "type": "row", "title": "Telegram-бот — апдейты, траты, запись (wallet-telegram)",
       "gridPos": { "x": 0, "y": 69, "w": 24, "h": 1 }, "collapsed": false, "panels": [] },
@@ -181,7 +198,7 @@
       "gridPos": { "x": 0, "y": 70, "w": 12, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
-      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(tg_updates_total[5m])) by (type)", "legendFormat": "{{type}}" } ] },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(tg_updates_total{env=~\"$env\"}[5m])) by (type)", "legendFormat": "{{type}}" } ] },
 
     { "id": 52, "type": "timeseries", "title": "Траты за час: разбор и запись",
       "description": "increase(tg_expense_total[1h]) — итог разбора сообщения (resolved — сразу карточка, ambiguous — вопрос кнопками, rejected, parse_failed); increase(tg_expense_save_total[1h]) — исход «✓ Записать» (saved, unavailable, lost, reader, rejected, ...).",
@@ -189,8 +206,8 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "bars", "fillOpacity": 60 } }, "overrides": [] },
       "targets": [
-        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "refId": "A", "expr": "sum(increase(tg_expense_total[1h])) by (result)", "legendFormat": "разбор: {{result}}" },
-        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "refId": "B", "expr": "sum(increase(tg_expense_save_total[1h])) by (result)", "legendFormat": "запись: {{result}}" }
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "refId": "A", "expr": "sum(increase(tg_expense_total{env=~\"$env\"}[1h])) by (result)", "legendFormat": "разбор: {{result}}" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "refId": "B", "expr": "sum(increase(tg_expense_save_total{env=~\"$env\"}[1h])) by (result)", "legendFormat": "запись: {{result}}" }
       ] },
 
     { "id": 53, "type": "timeseries", "title": "Не разобрано за час, по причине",
@@ -198,7 +215,7 @@
       "gridPos": { "x": 0, "y": 78, "w": 8, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "bars", "fillOpacity": 60 } }, "overrides": [] },
-      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(increase(tg_parse_fail_total[1h])) by (reason)", "legendFormat": "{{reason}}" } ] },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(increase(tg_parse_fail_total{env=~\"$env\"}[1h])) by (reason)", "legendFormat": "{{reason}}" } ] },
 
     { "id": 54, "type": "timeseries", "title": "Запись в wallet-api — p50 / p95",
       "description": "histogram_quantile по tg_wallet_push_duration_seconds_bucket — POST /sync/push от бота, все исходы.",
@@ -206,8 +223,8 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
       "targets": [
-        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "refId": "A", "expr": "histogram_quantile(0.50, sum(rate(tg_wallet_push_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p50" },
-        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "refId": "B", "expr": "histogram_quantile(0.95, sum(rate(tg_wallet_push_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p95" }
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "refId": "A", "expr": "histogram_quantile(0.50, sum(rate(tg_wallet_push_duration_seconds_bucket{env=~\"$env\"}[5m])) by (le))", "legendFormat": "p50" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "refId": "B", "expr": "histogram_quantile(0.95, sum(rate(tg_wallet_push_duration_seconds_bucket{env=~\"$env\"}[5m])) by (le))", "legendFormat": "p95" }
       ] },
 
     { "id": 55, "type": "timeseries", "title": "Telegram Bot API — p95 по методу",
@@ -215,7 +232,7 @@
       "gridPos": { "x": 16, "y": 78, "w": 8, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
-      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.95, sum(rate(tg_telegram_api_duration_seconds_bucket[5m])) by (le, method))", "legendFormat": "{{method}}" } ] },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.95, sum(rate(tg_telegram_api_duration_seconds_bucket{env=~\"$env\"}[5m])) by (le, method))", "legendFormat": "{{method}}" } ] },
 
     { "id": 56, "type": "timeseries", "title": "Ошибки внешних вызовов и апдейтов, в минуту",
       "description": "Telegram API по методу, wallet-api и wallet-report по виду (network / http_<код>), апдейты, упавшие с исключением.",
@@ -223,10 +240,10 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
       "targets": [
-        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "refId": "A", "expr": "sum(rate(tg_api_errors_total[5m])) by (method) * 60", "legendFormat": "telegram: {{method}}" },
-        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "refId": "B", "expr": "sum(rate(tg_wallet_api_errors_total[5m])) by (kind) * 60", "legendFormat": "wallet-api: {{kind}}" },
-        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "refId": "C", "expr": "sum(rate(tg_reports_errors_total[5m])) by (kind) * 60", "legendFormat": "wallet-report: {{kind}}" },
-        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "refId": "D", "expr": "sum(rate(tg_update_failures_total[5m])) * 60", "legendFormat": "апдейт упал" }
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "refId": "A", "expr": "sum(rate(tg_api_errors_total{env=~\"$env\"}[5m])) by (method) * 60", "legendFormat": "telegram: {{method}}" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "refId": "B", "expr": "sum(rate(tg_wallet_api_errors_total{env=~\"$env\"}[5m])) by (kind) * 60", "legendFormat": "wallet-api: {{kind}}" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "refId": "C", "expr": "sum(rate(tg_reports_errors_total{env=~\"$env\"}[5m])) by (kind) * 60", "legendFormat": "wallet-report: {{kind}}" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "refId": "D", "expr": "sum(rate(tg_update_failures_total{env=~\"$env\"}[5m])) * 60", "legendFormat": "апдейт упал" }
       ] },
 
     { "id": 57, "type": "stat", "title": "С последнего успешного getUpdates",
@@ -235,6 +252,6 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "s", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 60 }, { "color": "red", "value": 180 }] } }, "overrides": [] },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "background", "graphMode": "none" },
-      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "time() - max(tg_last_poll_ok_timestamp_seconds)", "legendFormat": "сек" } ] }
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "time() - max(tg_last_poll_ok_timestamp_seconds{env=~\"$env\"})", "legendFormat": "сек" } ] }
   ]
 }

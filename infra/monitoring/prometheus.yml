@@ -17,29 +17,49 @@ scrape_configs:
     static_configs:
       - targets: ["localhost:9090"]
 
-  # Четыре HTTP-сервиса проекта — каждый отдаёт RPS/latency-percentiles/
-  # errors на /metrics (см. src/util/metrics.hpp в каждом сервисе). job
-  # (имя ниже) — единственный лейбл, отличающий их друг от друга в общих
-  # рядах http_requests_total/http_request_duration_seconds; отдельного
-  # "service"-лейбла в самих метриках нет намеренно (см. metrics.hpp).
+  # HTTP-сервисы проекта — каждый отдаёт RPS/latency-percentiles/errors на
+  # /metrics (см. src/util/metrics.hpp в каждом сервисе). job (имя ниже)
+  # отличает сервисы друг от друга, метка env — контур (prod/test, design D11
+  # в openspec/changes/add-prod-test-environments). Цели — по alias'ам
+  # <сервис>-<env>: Prometheus сидит в сетях обоих контуров, а обычные имена
+  # (wallet-api, db, ...) внутри каждой сети одинаковые. Дашборды фильтруют
+  # по env через переменную $env.
   - job_name: google-auth
     static_configs:
-      - targets: ["google-auth:8080"]
+      - targets: ["google-auth-prod:8080"]
+        labels: {env: prod}
+      - targets: ["google-auth-test:8080"]
+        labels: {env: test}
   - job_name: wallet-api
     static_configs:
-      - targets: ["wallet-api:8082"]
+      - targets: ["wallet-api-prod:8082"]
+        labels: {env: prod}
+      - targets: ["wallet-api-test:8082"]
+        labels: {env: test}
   - job_name: wallet-report
     static_configs:
-      - targets: ["wallet-report:8084"]
+      - targets: ["wallet-report-prod:8084"]
+        labels: {env: prod}
+      - targets: ["wallet-report-test:8084"]
+        labels: {env: test}
   - job_name: wallet-gateway
     static_configs:
-      - targets: ["wallet-gateway:8090"]
+      - targets: ["wallet-gateway-prod:8090"]
+        labels: {env: prod}
+      - targets: ["wallet-gateway-test:8090"]
+        labels: {env: test}
   - job_name: wallet-telegram
     static_configs:
-      - targets: ["wallet-telegram:8086"]
+      - targets: ["wallet-telegram-prod:8086"]
+        labels: {env: prod}
+      - targets: ["wallet-telegram-test:8086"]
+        labels: {env: test}
   - job_name: wallet-ai
     static_configs:
-      - targets: ["wallet-ai:8087"]
+      - targets: ["wallet-ai-prod:8087"]
+        labels: {env: prod}
+      - targets: ["wallet-ai-test:8087"]
+        labels: {env: test}
 
   # CPU/RAM/сеть ПО КОНТЕЙНЕРАМ (container_cpu_usage_seconds_total,
   # container_memory_usage_bytes, container_network_{receive,transmit}_bytes_total,
@@ -51,25 +71,30 @@ scrape_configs:
     static_configs:
       - targets: ["cadvisor:8080"]
 
-  # CPU/RAM/сеть ПО ХОСТУ (podman-machine — WSL-VM на Windows, физически
-  # общая для всех контейнеров этого стенда, см. компенсирующий комментарий
-  # у fluent-bit в compose.yaml про тот же journal этой же VM) — то же самое,
-  # что container-метрики выше дают ПО ОТДЕЛЬНОСТИ, но суммарно.
+  # CPU/RAM/сеть ПО ХОСТУ — Linux-хост, общий для всех контейнеров обоих
+  # контуров; то же самое, что container-метрики выше дают ПО ОТДЕЛЬНОСТИ,
+  # но суммарно. Метки env у хоста и контейнеров нет: cAdvisor видит
+  # контейнер только по id.
   - job_name: node-exporter
     static_configs:
       - targets: ["node-exporter:9100"]
 
-  # DB connections/DB latency — см. GRANT pg_monitor в infra/db/init-db.sh и
-  # CREATE EXTENSION pg_stat_statements там же; --auto-discover-databases
-  # (см. сервис "postgres-exporter" в compose.yaml) обходит обе базы
-  # (auth+wallet) одним процессом.
+  # DB connections/DB latency — по экспортёру на контур (postgres-exporter-
+  # prod/-test в compose.yaml); GRANT pg_monitor и pg_stat_statements — см.
+  # infra/db/init-db.sh. --auto-discover-databases обходит все базы контура.
   - job_name: postgres-exporter
     static_configs:
-      - targets: ["postgres-exporter:9187"]
+      - targets: ["postgres-exporter-prod:9187"]
+        labels: {env: prod}
+      - targets: ["postgres-exporter-test:9187"]
+        labels: {env: test}
 
   # Активные access/refresh-токены google-auth (redis_connected_clients,
   # redis_memory_used_bytes, redis_commands_processed_total и т.п.) — см.
   # сервис "redis" в wallet-infra/compose.yaml, что именно тут хранится и почему с AOF.
   - job_name: redis-exporter
     static_configs:
-      - targets: ["redis-exporter:9121"]
+      - targets: ["redis-exporter-prod:9121"]
+        labels: {env: prod}
+      - targets: ["redis-exporter-test:9121"]
+        labels: {env: test}

@@ -27,11 +27,13 @@ datasources:
   # заводится самой миграцией perf, не init-db.sh — см. её комментарий).
   # "postgres" — встроенный тип датасорса Grafana (core-плагин, ничего
   # доустанавливать не нужно). database — своя, отдельная от auth/wallet, но
-  # тот же инстанс Postgres (контейнер "db"), что и у остальных ролей.
+  # тот же инстанс Postgres контура test, что и у остальных ролей.
   - name: Perf History
     uid: perf-history
     type: postgres
-    url: db:5432
+    # db-test — alias db контура test: нагрузочные прогоны и их история
+    # живут только в test (loadtest в prod не ходит).
+    url: db-test:5432
     database: perf_history
     user: perf_reader
     jsonData:

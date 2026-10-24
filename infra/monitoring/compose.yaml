@@ -5,15 +5,20 @@
 # у ЭТОГО запроса", эти — на "что происходит с системой прямо сейчас/за
 # последний час".
 #
-# В отличие от логов, этому стеку нужна сеть приложения: Prometheus скрейпит
-# /metrics сервисов, экспортёры ходят в db/redis, Grafana читает perf_history
-# из db. Поэтому wallet-net здесь external — её создаёт wallet-infra/compose.yaml,
-# и приложение должно быть поднято ПЕРВЫМ (иначе "network wallet-net declared
-# as external, but could not be found").
+# Один стек на ОБА контура (prod и test, design D11 в
+# openspec/changes/add-prod-test-environments). Контур различается меткой
+# env="prod"/"test": Prometheus подключён к сетям wallet-prod и wallet-test
+# (external, их создаёт infra/env/up.sh) и скрейпит сервисы по alias'ам
+# <сервис>-<env> — внутри сетей имена одинаковые (prometheus.yml).
+# Экспортёры postgres/redis — по одному на контур, каждый только в своей сети.
+# cadvisor, node-exporter и Grafana — в своей сети "monitoring"; Grafana ещё
+# и в wallet-test: база perf_history (нагрузочные прогоны) есть только там.
+# Prometheus в обеих сетях пакеты между ними не маршрутизирует.
 #
-# Запуск (из каталога servers/; --env-file — ради MONITORING_POSTGRES_* у
-# postgres-exporter, тот же infra/db/.env, что и у приложения):
-#   docker compose -f infra/monitoring/compose.yaml --env-file infra/db/.env up -d
+# Запуск — через скрипт: он берёт MONITORING_POSTGRES_* из db.env каждого
+# контура (~/.config/wallet-secrets/<env>/db.env) и создаёт сети контуров,
+# если их ещё нет:
+#   bash infra/monitoring/up.sh
 #
 # Открывать в браузере: http://localhost:13000 (Grafana, admin/admin),
 # http://localhost:19090 (Prometheus).
@@ -84,7 +89,7 @@ services:
     ports:
       - "18080:8080" # http://localhost:18080 — своя мини-веб-морда cAdvisor, удобно для проверки живьём
     networks:
-      - wallet-net
+      - monitoring
 
   # CPU/RAM/сеть ПО ХОСТУ — здесь "хост" это сам Linux-хост, физически общий
   # для ВСЕХ контейнеров этого стенда (тот же факт, на котором строится
@@ -106,7 +111,7 @@ services:
     ports:
       - "19100:9100"
     networks:
-      - wallet-net
+      - monitoring
 
   # DB connections/DB latency — роль MONITORING_POSTGRES_* (см. init-db.sh,
   # "Три роли" в infra/db/README.md — эта роль в их число намеренно не входит:
@@ -128,11 +133,14 @@ services:
   # depends_on на db нет — между compose-проектами он не работает; до
   # старта db экспортёр просто отдаёт pg_up 0 и подключается сам на
   # следующем скрейпе.
-  postgres-exporter:
+  # Один экспортёр на контур: роль MONITORING_POSTGRES_* своего контура (up.sh
+  # подставляет её как PROD_/TEST_MONITORING_POSTGRES_*), db — по alias'у
+  # db-<env> в сети контура. Порт хоста — только на 127.0.0.1.
+  postgres-exporter-prod: &postgres-exporter
     image: docker.io/prometheuscommunity/postgres-exporter:v0.15.0
     restart: unless-stopped
     environment:
-      DATA_SOURCE_NAME: postgresql://${MONITORING_POSTGRES_USER}:${MONITORING_POSTGRES_PASSWORD}@db:5432/${MIGRATOR_POSTGRES_DB}?sslmode=disable
+      DATA_SOURCE_NAME: postgresql://${PROD_MONITORING_POSTGRES_USER:?}:${PROD_MONITORING_POSTGRES_PASSWORD:?}@db-prod:5432/${PROD_MIGRATOR_POSTGRES_DB:?}?sslmode=disable
     volumes:
       - ./postgres-exporter/queries.yaml:/etc/postgres_exporter/queries.yaml:ro
     command:
@@ -141,22 +149,45 @@ services:
       - --collector.stat_statements
       - --extend.query-path=/etc/postgres_exporter/queries.yaml
     ports:
-      - "19187:9187"
+      - "127.0.0.1:19187:9187"
     networks:
-      - wallet-net
+      - monitoring
+      - wallet-prod
+
+  postgres-exporter-test:
+    <<: *postgres-exporter
+    environment:
+      DATA_SOURCE_NAME: postgresql://${TEST_MONITORING_POSTGRES_USER:?}:${TEST_MONITORING_POSTGRES_PASSWORD:?}@db-test:5432/${TEST_MIGRATOR_POSTGRES_DB:?}?sslmode=disable
+    ports:
+      - "127.0.0.1:19188:9187"
+    networks:
+      - monitoring
+      - wallet-test
 
   # Активные access/refresh-токены google-auth — база "redis" из
   # wallet-infra/compose.yaml, метрики (connected_clients, memory_used_bytes,
   # commands_processed_total и т.п.). Без depends_on — см. postgres-exporter.
-  redis-exporter:
+  redis-exporter-prod:
     image: docker.io/oliver006/redis_exporter:v1.62.0
     restart: unless-stopped
     environment:
-      REDIS_ADDR: redis://redis:6379
+      REDIS_ADDR: redis://redis-prod:6379
     ports:
-      - "19121:9121"
+      - "127.0.0.1:19121:9121"
     networks:
-      - wallet-net
+      - monitoring
+      - wallet-prod
+
+  redis-exporter-test:
+    image: docker.io/oliver006/redis_exporter:v1.62.0
+    restart: unless-stopped
+    environment:
+      REDIS_ADDR: redis://redis-test:6379
+    ports:
+      - "127.0.0.1:19122:9121"
+    networks:
+      - monitoring
+      - wallet-test
 
   # Собирает всё (сам себя + cadvisor/node-exporter/postgres-exporter/
   # redis-exporter/HTTP-сервисы проекта) — источники и интервал см.
@@ -172,7 +203,9 @@ services:
     ports:
       - "19090:9090" # http://localhost:19090 — PromQL-консоль самого Prometheus, страница /targets — какие скрейпы живы
     networks:
-      - wallet-net
+      - monitoring
+      - wallet-prod
+      - wallet-test
 
   # Дашборд "Wallet Transactions — Overview" (см.
   # grafana/dashboards/wallet-overview.json) — CPU/RAM/RPS/latency p50-p99/
@@ -198,10 +231,17 @@ services:
     ports:
       - "13000:3000" # открывать в браузере: http://localhost:13000 (admin/admin)
     networks:
-      - wallet-net
+      - monitoring
+      # perf_history (datasource "Perf History") — только в контуре test.
+      - wallet-test
 
 networks:
-  wallet-net:
+  monitoring:
+  wallet-prod:
+    name: wallet-prod
+    external: true
+  wallet-test:
+    name: wallet-test
     external: true
 
 volumes:

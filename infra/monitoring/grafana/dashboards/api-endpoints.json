@@ -10,6 +10,19 @@
   "templating": {
     "list": [
       {
+        "name": "env",
+        "label": "Контур",
+        "type": "custom",
+        "query": "prod,test",
+        "current": { "text": "prod", "value": "prod" },
+        "options": [
+          { "selected": true, "text": "prod", "value": "prod" },
+          { "selected": false, "text": "test", "value": "test" }
+        ],
+        "multi": false,
+        "includeAll": false
+      },
+      {
         "name": "service",
         "label": "Сервис",
         "type": "query",
@@ -85,15 +98,15 @@
         { "id": "sortBy", "options": { "fields": {}, "sort": [{ "field": "p95 ms", "desc": true }] } }
       ],
       "targets": [
-        { "refId": "A", "format": "table", "instant": true, "expr": "sum by (job, method, route) (increase(http_requests_total{job=~\"$service\"}[$__range]))" },
-        { "refId": "B", "format": "table", "instant": true, "expr": "sum by (job, method, route) (rate(http_requests_total{job=~\"$service\"}[$__range]))" },
-        { "refId": "C", "format": "table", "instant": true, "expr": "(sum by (job, method, route) (rate(http_request_duration_seconds_sum{job=~\"$service\"}[$__range])) / sum by (job, method, route) (rate(http_request_duration_seconds_count{job=~\"$service\"}[$__range]))) * 1000" },
-        { "refId": "D", "format": "table", "instant": true, "expr": "histogram_quantile(0.50, sum by (le, job, method, route) (rate(http_request_duration_seconds_bucket{job=~\"$service\"}[$__range]))) * 1000" },
-        { "refId": "E", "format": "table", "instant": true, "expr": "histogram_quantile(0.90, sum by (le, job, method, route) (rate(http_request_duration_seconds_bucket{job=~\"$service\"}[$__range]))) * 1000" },
-        { "refId": "F", "format": "table", "instant": true, "expr": "histogram_quantile(0.95, sum by (le, job, method, route) (rate(http_request_duration_seconds_bucket{job=~\"$service\"}[$__range]))) * 1000" },
-        { "refId": "G", "format": "table", "instant": true, "expr": "histogram_quantile(0.99, sum by (le, job, method, route) (rate(http_request_duration_seconds_bucket{job=~\"$service\"}[$__range]))) * 1000" },
-        { "refId": "H", "format": "table", "instant": true, "expr": "sum by (job, method, route) (increase(http_requests_total{job=~\"$service\", status=~\"4..|5..\"}[$__range]))" },
-        { "refId": "I", "format": "table", "instant": true, "expr": "(sum by (job, method, route) (rate(http_requests_total{job=~\"$service\", status=~\"4..|5..\"}[$__range])) / sum by (job, method, route) (rate(http_requests_total{job=~\"$service\"}[$__range]))) * 100" }
+        { "refId": "A", "format": "table", "instant": true, "expr": "sum by (job, method, route) (increase(http_requests_total{env=~\"$env\", job=~\"$service\"}[$__range]))" },
+        { "refId": "B", "format": "table", "instant": true, "expr": "sum by (job, method, route) (rate(http_requests_total{env=~\"$env\", job=~\"$service\"}[$__range]))" },
+        { "refId": "C", "format": "table", "instant": true, "expr": "(sum by (job, method, route) (rate(http_request_duration_seconds_sum{env=~\"$env\", job=~\"$service\"}[$__range])) / sum by (job, method, route) (rate(http_request_duration_seconds_count{env=~\"$env\", job=~\"$service\"}[$__range]))) * 1000" },
+        { "refId": "D", "format": "table", "instant": true, "expr": "histogram_quantile(0.50, sum by (le, job, method, route) (rate(http_request_duration_seconds_bucket{env=~\"$env\", job=~\"$service\"}[$__range]))) * 1000" },
+        { "refId": "E", "format": "table", "instant": true, "expr": "histogram_quantile(0.90, sum by (le, job, method, route) (rate(http_request_duration_seconds_bucket{env=~\"$env\", job=~\"$service\"}[$__range]))) * 1000" },
+        { "refId": "F", "format": "table", "instant": true, "expr": "histogram_quantile(0.95, sum by (le, job, method, route) (rate(http_request_duration_seconds_bucket{env=~\"$env\", job=~\"$service\"}[$__range]))) * 1000" },
+        { "refId": "G", "format": "table", "instant": true, "expr": "histogram_quantile(0.99, sum by (le, job, method, route) (rate(http_request_duration_seconds_bucket{env=~\"$env\", job=~\"$service\"}[$__range]))) * 1000" },
+        { "refId": "H", "format": "table", "instant": true, "expr": "sum by (job, method, route) (increase(http_requests_total{env=~\"$env\", job=~\"$service\", status=~\"4..|5..\"}[$__range]))" },
+        { "refId": "I", "format": "table", "instant": true, "expr": "(sum by (job, method, route) (rate(http_requests_total{env=~\"$env\", job=~\"$service\", status=~\"4..|5..\"}[$__range])) / sum by (job, method, route) (rate(http_requests_total{env=~\"$env\", job=~\"$service\"}[$__range]))) * 100" }
       ]
     },
     {
@@ -113,7 +126,7 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
       "targets": [
-        { "refId": "A", "expr": "sum(rate(http_requests_total{job=~\"$service\"}[$__rate_interval])) by (job, method, route)", "legendFormat": "{{job}} {{method}} {{route}}" }
+        { "refId": "A", "expr": "sum(rate(http_requests_total{env=~\"$env\", job=~\"$service\"}[$__rate_interval])) by (job, method, route)", "legendFormat": "{{job}} {{method}} {{route}}" }
       ]
     },
     {
@@ -125,7 +138,7 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
       "targets": [
-        { "refId": "A", "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job=~\"$service\"}[5m])) by (le, job, method, route))", "legendFormat": "{{job}} {{method}} {{route}}" }
+        { "refId": "A", "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{env=~\"$env\", job=~\"$service\"}[5m])) by (le, job, method, route))", "legendFormat": "{{job}} {{method}} {{route}}" }
       ]
     },
     {
@@ -137,7 +150,7 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
       "targets": [
-        { "refId": "A", "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{job=~\"$service\"}[5m])) by (le, job, method, route))", "legendFormat": "{{job}} {{method}} {{route}}" }
+        { "refId": "A", "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{env=~\"$env\", job=~\"$service\"}[5m])) by (le, job, method, route))", "legendFormat": "{{job}} {{method}} {{route}}" }
       ]
     },
     {
@@ -149,7 +162,7 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
       "targets": [
-        { "refId": "A", "expr": "sum(rate(http_requests_total{job=~\"$service\", status=~\"4..|5..\"}[$__rate_interval])) by (job, method, route)", "legendFormat": "{{job}} {{method}} {{route}}" }
+        { "refId": "A", "expr": "sum(rate(http_requests_total{env=~\"$env\", job=~\"$service\", status=~\"4..|5..\"}[$__rate_interval])) by (job, method, route)", "legendFormat": "{{job}} {{method}} {{route}}" }
       ]
     }
   ]

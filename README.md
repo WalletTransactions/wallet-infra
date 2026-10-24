@@ -62,7 +62,7 @@ google-auth, раздел "Версия", там же весь механизм 
 | `infra/env` | Контуры prod и test: настройки (`prod.env`, `test.env`), `up.sh`, `migrate.sh`, выкат — см. [infra/env/README.md](infra/env/README.md) |
 | `infra/db` | Конфиг инстанса Postgres: роли, `init-db.sh`, миграции базы `perf` — см. [infra/db/README.md](infra/db/README.md). `perf` — история прогонов нагрузочного контура (`test_run`/`test_result`, читается дашбордом Grafana "Perf History", см. `wallet-report/loadtest/README.md`) |
 | `infra/logging` | Конфиг Fluent Bit и сохранённые объекты OpenSearch Dashboards для дев-стенда логов — отдельный стек `wallet-logging`, [`infra/logging/compose.yaml`](infra/logging/compose.yaml) |
-| `infra/monitoring` | Конфиг Prometheus + дашборд Grafana для дев-стенда метрик (CPU/RAM/RPS, latency p50/p95/p99, DB connections, DB latency, сеть, errors) — отдельный стек `wallet-monitoring`, [`infra/monitoring/compose.yaml`](infra/monitoring/compose.yaml), комментарии там же и в `infra/monitoring/prometheus.yml` |
+| `infra/monitoring` | Prometheus + Grafana для обоих контуров (метка и переменная `env`), запуск — `infra/monitoring/up.sh`; метрики (CPU/RAM/RPS, latency p50/p95/p99, DB connections, DB latency, сеть, errors) — отдельный стек `wallet-monitoring`, [`infra/monitoring/compose.yaml`](infra/monitoring/compose.yaml), комментарии там же и в `infra/monitoring/prometheus.yml` |
 | `infra/diagrams` | PlantUML-схемы (`components.puml`, `sequence.puml`, `sync-sequence.puml`) — см. [infra/diagrams/README.md](infra/diagrams/README.md) |
 
 ## Запуск
@@ -90,7 +90,7 @@ docker по одному [`compose.yaml`](compose.yaml):
 
 ```bash
 docker compose -f infra/logging/compose.yaml up -d      # OpenSearch Dashboards: http://localhost:15601
-docker compose -f infra/monitoring/compose.yaml up -d   # Grafana: http://localhost:13000, Prometheus: http://localhost:19090
+bash infra/monitoring/up.sh                             # Grafana: http://localhost:13000, Prometheus: http://localhost:19090
 ```
 
 Дашборд Grafana "Wallet Transactions — Overview" заводится сам при первом
