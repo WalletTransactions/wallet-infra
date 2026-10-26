@@ -90,9 +90,13 @@ env_check_tags() {
 # env_lock — блокировка контура: выкаты, миграции и перезаливка идут строго
 # по одному (спека release-promotion). Ждёт чужую операцию, не падает.
 # Повторный вызов в том же процессе или дочернем скрипте — no-op.
+# Файл — в каталоге состояния, а не в /tmp: у контейнера Jenkins свой /tmp,
+# а каталог состояния смонтирован туда же, и ручной запуск на хосте ждёт
+# job'ы Jenkins (и наоборот).
 env_lock() {
     [[ "${WALLET_ENV_LOCK_HELD:-}" == "$ENV_NAME" ]] && return 0
-    exec 9>"/tmp/wallet-env-${ENV_NAME}.lock"
+    mkdir -p "$STATE_ROOT"
+    exec 9>"$STATE_ROOT/$ENV_NAME.lock"
     if ! flock -n 9; then
         echo "==> контур $ENV_NAME занят другой операцией, жду..."
         flock 9

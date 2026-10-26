@@ -136,7 +136,8 @@ Jenkins держит на хосте checkout wallet-infra по выкатанн
   Опрашивать ghcr, а не git, выбрано потому, что выкатить можно только то, что уже
   опубликовано. Webhook не подходит: Jenkins в LAN, и GitHub до него не достучится.
 - **`env-deploy`** (ENV, SERVICE, TAG) → `infra/env/deploy.sh`:
-  1. `flock` `/tmp/wallet-env-<env>.lock`;
+  1. `flock` `<state>/<env>.lock` — в каталоге состояния, общем для хоста и
+     контейнера Jenkins (у контейнера свой `/tmp`, блокировка там не видна хосту);
   2. `docker pull`, digest образа;
   3. для prod — гейт по digest и дамп (D6);
   4. миграции (D4), если у сервиса есть база;

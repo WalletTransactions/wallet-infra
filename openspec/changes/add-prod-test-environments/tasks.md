@@ -49,7 +49,7 @@
 ## 4. Выкат (wallet-infra + BuildPlatform)
 
 - [x] 4.1 Написать `infra/env/deploy.sh <env> <сервис> <тег> [--rollback]` по D5 и D6 (`--rollback` — без миграций и без гейта):
-  - flock `/tmp/wallet-env-<env>.lock`;
+  - flock `<state>/<env>.lock` (не `/tmp`: у контейнера Jenkins свой `/tmp`);
   - pull и digest;
   - гейт digest и дамп для prod;
   - миграции;
@@ -60,9 +60,9 @@
   - чистка образов сервиса старше 3 версий.
 
   Проверка: выкат rc в test проходит. Выкат в prod непроверенного digest падает с «digest не проверен в test». Битый тег (контейнер не healthy) возвращается на прежний.
-- [ ] 4.2 Добавить в `deploy.sh` ветку `wallet-infra`: checkout тега в `<state>/<env>/infra`, `up.sh`, smoke, при ошибке — прежний тег. Проверка: выкат тега wallet-infra не меняет версий сервисов (`docker compose ps --format` до и после).
+- [x] 4.2 Добавить в `deploy.sh` ветку `wallet-infra`: checkout тега в `<state>/<env>/infra`, `up.sh`, smoke, при ошибке — прежний тег. Проверка: выкат тега wallet-infra не меняет версий сервисов (`docker compose ps --format` до и после).
 - [x] 4.3 Написать `infra/env/backup.sh prod`: дамп четырёх баз prod в `${WALLET_BACKUP_DIR}`, ротация (3 последних с выкатов плюс 7 суточных). Проверка: после двух ручных запусков в каталоге лежат файлы, `pg_restore -l` их читает.
-- [ ] 4.4 Смонтировать в Jenkins `~/.config/wallet-secrets`, `~/.local/state/wallet-envs`, `${WALLET_BACKUP_DIR}` и `~/.docker/config.json` по тем же абсолютным путям (D7). Проверка: из контейнера Jenkins `docker compose config` контура test проходит.
+- [x] 4.4 Смонтировать в Jenkins `~/.config/wallet-secrets`, `~/.local/state/wallet-envs`, `${WALLET_BACKUP_DIR}` и `~/.docker/config.json` по тем же абсолютным путям (D7). Проверка: из контейнера Jenkins `docker compose config` контура test проходит.
 - [ ] 4.5 Создать job'ы `env-deploy`, `env-rollback` (параметры ENV, SERVICE, TAG) и `prod-backup` (ежесуточно) — тонкие обёртки над скриптами из `<state>/<env>/infra`. Проверка: ручной откат `wallet-api` в test на предыдущий rc без запуска миграций.
 - [ ] 4.6 Создать job `env-release-watch` (cron `H/5`): теги ghcr и `git ls-remote` wallet-infra против `tags.env`, запуск `env-deploy`. Проверка: новый rc-тег сервиса через ≤10 минут работает в test, а prod не тронут.
 - [ ] 4.7 Удалить job'ы `deploy-*` (кроме `deploy-logging`, `deploy-monitoring`), `deploy-all`, `deploy-servers`, `db-migrate` и `lib/deploy_services.sh`, `lib/migrate_all.sh`. Перенацелить `wallet-api-loadtest` и `wallet-report-loadtest` на сеть `wallet-test`. Проверка: loadtest проходит против test, в prod нет запросов от него (логи гейтвея prod).
@@ -99,7 +99,7 @@
 
   Проверка: после запуска число кошельков в test равно prod, три таблицы пусты, старая cookie test получает 401.
 - [ ] 6.2 Создать job `env-test-refresh` (ручной запуск), использует ту же блокировку контура, что и `deploy.sh`. Проверка: rc-тег, появившийся во время перезаливки, выкатывается в test только после её окончания (по времени в логах).
-- [ ] 6.3 Описать сид и перезаливку в `infra/env/README.md`. Проверка: в README есть раздел с командой и списком того, что вычищается.
+- [x] 6.3 Описать сид и перезаливку в `infra/env/README.md`. Проверка: в README есть раздел с командой и списком того, что вычищается.
 
 ## 7. Переключение prod
 
