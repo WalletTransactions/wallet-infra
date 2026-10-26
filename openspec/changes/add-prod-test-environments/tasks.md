@@ -48,7 +48,7 @@
 
 ## 4. Выкат (wallet-infra + BuildPlatform)
 
-- [ ] 4.1 Написать `infra/env/deploy.sh <env> <сервис> <тег> [--no-migrate]` по D5 и D6:
+- [x] 4.1 Написать `infra/env/deploy.sh <env> <сервис> <тег> [--rollback]` по D5 и D6 (`--rollback` — без миграций и без гейта):
   - flock `/tmp/wallet-env-<env>.lock`;
   - pull и digest;
   - гейт digest и дамп для prod;

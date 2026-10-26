@@ -137,6 +137,9 @@ deploy_infra() {
     # git checkout заменяет файлы новыми (unlink + create), а bash дочитывает
     # уже открытый старый файл — выполняющийся скрипт это не ломает.
     git -C "$checkout" checkout -q --detach "$git_tag"
+    # smoke — по compose.yaml выкатываемого тега (при первом выкате lib.sh
+    # ещё смотрел в рабочую папку: checkout'а не было).
+    COMPOSE_DIR="$checkout"
     if bash "$checkout/infra/env/up.sh" "$ENV_NAME" && smoke_gateway; then
         mark_verified "git:$commit" wallet-infra "$git_tag"
         log_history wallet-infra "$git_tag" "git:$commit" ok
