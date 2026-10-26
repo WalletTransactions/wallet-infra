@@ -89,6 +89,8 @@ openssl genrsa -out "$S/jwt_signing_key.pem" 2048 && chmod 644 "$S/jwt_signing_k
   общий на оба контура), `REDIRECT_URL=http://localhost:<порт
   контура>/auth/google/callback` (этот URI должен быть в списке клиента в
   Google Cloud Console), `ADMIN_EMAILS`, `TELEGRAM_SERVICE_SECRET`,
+  `TELEGRAM_BOT_USERNAME` (имя бота контура без `@`, как в
+  `wallet-telegram.env`; без него «Подключить Telegram» в вебе получает 503),
   `JWT_RSA_PRIVATE_KEY_PATH=/app/jwt_signing_key.pem`.
 - `wallet-telegram.env` — токен и имя бота контура (в test — отдельный бот
   из BotFather, НЕ @WalletTransaction_bot: два процесса на одном токене
