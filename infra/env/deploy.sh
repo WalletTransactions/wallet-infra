@@ -120,10 +120,10 @@ deploy_infra() {
     local git_tag="v$image_tag" checkout="$STATE_DIR/infra" prev="" commit
     local repo="${WALLET_INFRA_REPO:-https://github.com/WalletTransactions/wallet-infra.git}"
     if [[ -d "$checkout/.git" ]]; then
-        git -C "$checkout" fetch -q --tags --force origin
+        infra_git -C "$checkout" fetch -q --tags --force origin
         prev="$(git -C "$checkout" describe --tags --exact-match HEAD 2>/dev/null || true)"
     else
-        git clone -q --no-checkout "$repo" "$checkout"
+        infra_git clone -q --no-checkout "$repo" "$checkout"
     fi
     commit="$(git -C "$checkout" rev-parse --verify -q "$git_tag^{commit}")" \
         || die "в wallet-infra нет тега $git_tag"

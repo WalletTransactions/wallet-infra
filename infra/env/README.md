@@ -146,6 +146,19 @@ curl -s http://localhost:8091/healthz
   повторяется — его заменит следующий;
 - git-теги wallet-infra — так же, гейт prod по коммиту.
 
+Репозиторий wallet-infra приватный, а у Jenkins нет git-учётки хоста.
+Теги wallet-infra он читает fine-grained токеном GitHub (Repository access:
+только `wallet-infra`; Permissions: Contents — Read-only) из
+`~/.config/wallet-secrets/github-read.token` (файл 600; каталог уже
+смонтирован в Jenkins). Нет файла — `release-watch.sh` предупреждает и
+пропускает только wallet-infra, сервисы выкатываются как обычно; на хосте git
+тогда идёт со своей учёткой.
+
+```bash
+install -m 600 /dev/null ~/.config/wallet-secrets/github-read.token
+$EDITOR ~/.config/wallet-secrets/github-read.token   # вставить токен
+```
+
 Посмотреть, что выкатится на следующем прогоне, ничего не трогая:
 `bash infra/env/release-watch.sh`.
 

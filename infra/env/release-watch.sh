@@ -115,7 +115,13 @@ done | sort -s -k1,1r   # test раньше prod
 
 # --- wallet-infra ----------------------------------------------------------
 # ls-remote без --refs: у аннотированного тега коммит — в строке "^{}".
-refs="$(git ls-remote --tags "$REPO_INFRA")" || die "git ls-remote $REPO_INFRA не удался"
+# Нет доступа к GitHub — пропускаем только wallet-infra: выкат образов
+# сервисов от него не зависит и не должен из-за него стоять.
+if ! refs="$(infra_git ls-remote --tags "$REPO_INFRA")"; then
+    echo "ВНИМАНИЕ: git ls-remote $REPO_INFRA не удался — теги wallet-infra не проверены" \
+         "(нет ${WALLET_SECRETS_ROOT:-~/.config/wallet-secrets}/github-read.token? см. infra/env/README.md)" >&2
+    exit 0
+fi
 infra_tags="$(awk '{ sub("refs/tags/v", "", $2); sub(/\^\{\}$/, "", $2); print $2 }' <<<"$refs" | sort -u)"
 for env_name in test prod; do
     kind=rc

@@ -116,6 +116,23 @@ env_compose() {
         "$@"
 }
 
+# infra_git <аргументы git...> — git к репозиторию wallet-infra (он приватный).
+# Если есть ${WALLET_SECRETS_ROOT}/github-read.token (fine-grained токен,
+# Contents: read только на wallet-infra) — авторизация им: в контейнере
+# Jenkins git-учётки хоста нет. Токен читает credential helper в момент
+# запроса — в аргументы процессов и в вывод он не попадает. Файла нет —
+# обычный git со своей учёткой (на хосте).
+infra_git() {
+    local token_file="${WALLET_SECRETS_ROOT:-$HOME/.config/wallet-secrets}/github-read.token"
+    if [[ -f "$token_file" ]]; then
+        GIT_TERMINAL_PROMPT=0 git -c credential.helper= \
+            -c "credential.https://github.com.helper=!f() { test \"\$1\" = get || exit 0; echo username=x-access-token; printf password=; cat '$token_file'; }; f" \
+            "$@"
+    else
+        GIT_TERMINAL_PROMPT=0 git "$@"
+    fi
+}
+
 # tag_var <сервис> — имя переменной тега в tags.env: wallet-api → WALLET_API_TAG.
 tag_var() {
     local s="${1^^}"
