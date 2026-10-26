@@ -68,15 +68,28 @@ echo "==> [test] остановка сервисов (кроме db и redis)"
 mapfile -t services < <(env_compose config --services | grep -vxE 'db|redis')
 env_compose stop "${services[@]}"
 
-# tpsql <база> — psql суперпользователем в db test, SQL из stdin.
+# tpsql <база> [аргументы psql...] — psql суперпользователем в db test, SQL из stdin.
 tpsql() {
-    docker exec -i "$test_db" sh -c 'psql -v ON_ERROR_STOP=1 -q -U "$POSTGRES_USER" -d "$1"' sh "$1"
+    local db="$1"
+    shift
+    docker exec -i "$test_db" sh -c 'db="$1"; shift; psql -v ON_ERROR_STOP=1 -q -U "$POSTGRES_USER" -d "$db" "$@"' sh "$db" "$@"
 }
 
-declare -A test_name
+# Права уровня базы (GRANT ... ON DATABASE) не входят в pg_dump без --create
+# и пропадают вместе с DROP DATABASE. Часть их выдаёт init-db.sh, часть —
+# миграции (wallet-api 000002: CONNECT для wallet_reader), а миграции,
+# версия которых пришла из дампа prod, заново не выполняются. Поэтому
+# снимаем их с базы test до DROP и возвращаем после восстановления.
+declare -A test_name db_grants
 for base in "${BASES[@]}"; do
     v="${base^^}_POSTGRES_DB"
     test_name[$base]="${!v:?в db.env test не задан $v}"
+    db_grants[$base]="$(tpsql postgres -tA -v db="${test_name[$base]}" <<'SQL'
+SELECT format('GRANT %s ON DATABASE %I TO %I;', a.privilege_type, d.datname, r.rolname)
+FROM pg_database d, aclexplode(d.datacl) a JOIN pg_roles r ON r.oid = a.grantee
+WHERE d.datname = :'db';
+SQL
+)"
     echo "==> [test] пересоздаю базу ${test_name[$base]}"
     tpsql postgres <<<"DROP DATABASE IF EXISTS \"${test_name[$base]}\" WITH (FORCE);"
 done
@@ -90,6 +103,7 @@ for base in "${BASES[@]}"; do
     | docker exec -i "$test_db" sh -c \
         'pg_restore -U "$POSTGRES_USER" -d "$1" --clean --if-exists --exit-on-error --single-transaction' \
         sh "${test_name[$base]}"
+    tpsql postgres <<<"${db_grants[$base]}"
 done
 
 for base in "${BASES[@]}"; do
