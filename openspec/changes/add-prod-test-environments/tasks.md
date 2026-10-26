@@ -64,10 +64,12 @@
 - [x] 4.2 Добавить в `deploy.sh` ветку `wallet-infra`: checkout тега в `<state>/<env>/infra`, `up.sh`, smoke, при ошибке — прежний тег. Проверка: выкат тега wallet-infra не меняет версий сервисов (`docker compose ps --format` до и после).
 - [x] 4.3 Написать `infra/env/backup.sh prod`: дамп четырёх баз prod в `${WALLET_BACKUP_DIR}`, ротация (3 последних с выкатов плюс 7 суточных). Проверка: после двух ручных запусков в каталоге лежат файлы, `pg_restore -l` их читает.
 - [x] 4.4 Смонтировать в Jenkins `~/.config/wallet-secrets`, `~/.local/state/wallet-envs`, `${WALLET_BACKUP_DIR}` и `~/.docker/config.json` по тем же абсолютным путям (D7). Проверка: из контейнера Jenkins `docker compose config` контура test проходит.
-- [ ] 4.5 Создать job'ы `env-deploy`, `env-rollback` (параметры ENV, SERVICE, TAG) и `prod-backup` (ежесуточно) — тонкие обёртки над скриптами из `<state>/<env>/infra`. Проверка: ручной откат `wallet-api` в test на предыдущий rc без запуска миграций.
-- [ ] 4.6 Создать job `env-release-watch` (cron `H/5`): теги ghcr и `git ls-remote` wallet-infra против `tags.env`, запуск `env-deploy`. Проверка: новый rc-тег сервиса через ≤10 минут работает в test, а prod не тронут.
+- [x] 4.5 Создать job'ы `env-deploy`, `env-rollback` (параметры ENV, SERVICE, TAG) и `prod-backup` (ежесуточно) — тонкие обёртки над скриптами из `<state>/<env>/infra`. Проверка: ручной откат `wallet-api` в test на предыдущий rc без запуска миграций.
+- [x] 4.6 Создать job `env-release-watch` (cron `H/5`): теги ghcr и `git ls-remote` wallet-infra против `tags.env`, запуск `env-deploy`. Проверка: новый rc-тег сервиса через ≤10 минут работает в test, а prod не тронут.
+  Итог 2026-10-26: watch #3 → env-deploy #2, google-auth 0.1.1-rc.1 в test, prod без изменений. Теги wallet-infra Jenkins читает токеном `~/.config/wallet-secrets/github-read.token` (README infra/env); без файла watch пропускает только wallet-infra.
 - [ ] 4.7 Удалить job'ы `deploy-*` (кроме `deploy-logging`, `deploy-monitoring`), `deploy-all`, `deploy-servers`, `db-migrate` и `lib/deploy_services.sh`, `lib/migrate_all.sh`. Перенацелить `wallet-api-loadtest` и `wallet-report-loadtest` на сеть `wallet-test`. Проверка: loadtest проходит против test, в prod нет запросов от него (логи гейтвея prod).
-- [ ] 4.8 Проверить логи всех env-job'ов на секреты: grep значений из `wallet-secrets` по `$JENKINS_HOME/jobs/{env-*,prod-backup}/builds/*/log`. Проверка: совпадений нет.
+- [x] 4.8 Проверить логи всех env-job'ов на секреты: grep значений из `wallet-secrets` по `$JENKINS_HOME/jobs/{env-*,prod-backup}/builds/*/log`. Проверка: совпадений нет.
+  Итог 2026-10-26: 11 логов (watch, deploy, rollback и др.), все `*PASSWORD*/*TOKEN*/*SECRET*/*KEY*` обоих контуров и строки обоих PEM — 0 совпадений (положительный контроль конвейера grep — находит). Повторить после первых прогонов `prod-backup` и `env-test-refresh`.
 - [ ] 4.9 Описать job'ы в `BuildPlatform/jenkins/README.md`. Проверка: README описывает новые job'ы, их параметры и отсутствие старых.
 
 ## 5. Контур test
