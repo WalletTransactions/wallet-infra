@@ -70,6 +70,7 @@
 - [ ] 4.7 Удалить job'ы `deploy-*` (кроме `deploy-logging`, `deploy-monitoring`), `deploy-all`, `deploy-servers`, `db-migrate` и `lib/deploy_services.sh`, `lib/migrate_all.sh`. Перенацелить `wallet-api-loadtest` и `wallet-report-loadtest` на сеть `wallet-test`. Проверка: loadtest проходит против test, в prod нет запросов от него (логи гейтвея prod).
 - [x] 4.8 Проверить логи всех env-job'ов на секреты: grep значений из `wallet-secrets` по `$JENKINS_HOME/jobs/{env-*,prod-backup}/builds/*/log`. Проверка: совпадений нет.
   Итог 2026-10-26: 11 логов (watch, deploy, rollback и др.), все `*PASSWORD*/*TOKEN*/*SECRET*/*KEY*` обоих контуров и строки обоих PEM — 0 совпадений (положительный контроль конвейера grep — находит). Повторить после первых прогонов `prod-backup` и `env-test-refresh`.
+  Повтор 2026-10-27: `prod-backup` #2, `env-test-refresh` #5–6, `env-deploy` #5–6 — 34 значения секретов prod и test (включая строки PEM), 0 совпадений. `prod-backup` #1 падал на «script not yet approved», из-за чего cron не регистрировался и суточных дампов не было; скрипт одобрен, #2 — 4 дампа читаются `pg_restore -l`, триггер `H 3 * * *` активен.
 - [ ] 4.9 Описать job'ы в `BuildPlatform/jenkins/README.md`. Проверка: README описывает новые job'ы, их параметры и отсутствие старых.
 
 ## 5. Контур test
@@ -90,7 +91,7 @@
 
 ## 6. Перезаливка test из prod
 
-- [ ] 6.1 Написать `infra/env/test-refresh.sh` по D9:
+- [x] 6.1 Написать `infra/env/test-refresh.sh` по D9:
   - блокировка test;
   - остановка сервисов test, кроме db и redis;
   - дамп prod ролью `dumper`;
@@ -101,7 +102,9 @@
   - `up.sh test`.
 
   Проверка: после запуска число кошельков в test равно prod, три таблицы пусты, старая cookie test получает 401.
-- [ ] 6.2 Создать job `env-test-refresh` (ручной запуск), использует ту же блокировку контура, что и `deploy.sh`. Проверка: rc-тег, появившийся во время перезаливки, выкатывается в test только после её окончания (по времени в логах).
+  Итог 2026-10-27 (`env-test-refresh` #5): до — test ledger 1 / operation 6, prod 0 / 0; после — test 0 / 0 = prod, users 1 = 1, `schema_migrations` wallet 25 = 25; `telegram_links`, `tg_link`, `tg_update_offset` пусты (и в prod пусты — сам TRUNCATE вживую не отличить, проверен по коду); Redis test — 0 ключей; сервисы test healthy. Сессия, заведённая до перезаливки: refresh — 401, `/auth/me` — 401, а `/api/*` через гейтвей — 200 до `exp` (JWKS): сценарий спеки «Сессии сброшены» уточнён, добавлен «Access-токен до exp».
+- [x] 6.2 Создать job `env-test-refresh` (ручной запуск), использует ту же блокировку контура, что и `deploy.sh`. Проверка: rc-тег, появившийся во время перезаливки, выкатывается в test только после её окончания (по времени в логах).
+  Итог 2026-10-27: `env-test-refresh` #6 (CONFIRM) шёл T+0…T+90.2 с; `env-deploy` #6 (test, wallet-report 0.1.0-rc.2), поставленный на T+55 с посреди пересоздания баз, напечатал «контур test занят другой операцией, жду...» и закончился на T+95.6 с — через 5 с после перезаливки. Обратный порядок (#5: выкат первым) — перезаливка так же ждёт выката.
 - [x] 6.3 Описать сид и перезаливку в `infra/env/README.md`. Проверка: в README есть раздел с командой и списком того, что вычищается.
 
 ## 7. Переключение prod
