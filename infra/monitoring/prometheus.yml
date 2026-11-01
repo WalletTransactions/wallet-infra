@@ -60,6 +60,16 @@ scrape_configs:
         labels: {env: prod}
       - targets: ["wallet-ai-test:8087"]
         labels: {env: test}
+  # MCP-сервер: кроме HTTP-гистограммы — вызовы инструментов
+  # (mcp_tool_calls_total{tool,result}, mcp_tool_duration_seconds) и обмены
+  # токена в google-auth (mcp_token_exchange_total, mcp_token_cache_total) —
+  # строка "wallet-mcp" в wallet-overview.json.
+  - job_name: wallet-mcp
+    static_configs:
+      - targets: ["wallet-mcp-prod:8088"]
+        labels: {env: prod}
+      - targets: ["wallet-mcp-test:8088"]
+        labels: {env: test}
 
   # CPU/RAM/сеть ПО КОНТЕЙНЕРАМ (container_cpu_usage_seconds_total,
   # container_memory_usage_bytes, container_network_{receive,transmit}_bytes_total,

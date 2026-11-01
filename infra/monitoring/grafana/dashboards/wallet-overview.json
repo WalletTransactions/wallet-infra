@@ -252,6 +252,48 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "s", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 60 }, { "color": "red", "value": 180 }] } }, "overrides": [] },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "background", "graphMode": "none" },
-      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "time() - max(tg_last_poll_ok_timestamp_seconds{env=~\"$env\"})", "legendFormat": "сек" } ] }
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "time() - max(tg_last_poll_ok_timestamp_seconds{env=~\"$env\"})", "legendFormat": "сек" } ] },
+
+    { "id": 60, "type": "row", "title": "wallet-mcp — инструменты, обмен токена (MCP-сервер)",
+      "gridPos": { "x": 0, "y": 94, "w": 24, "h": 1 }, "collapsed": false, "panels": [] },
+
+    { "id": 61, "type": "timeseries", "title": "Вызовы инструментов в минуту, по имени и исходу",
+      "description": "sum(rate(mcp_tool_calls_total[5m])) by (tool, result) * 60. result: ok, tool_error (модель получила isError: неоднозначная категория, неизвестный счёт и т. п.), unavailable (wallet-report не ответил). Метрики — wallet-mcp, спека service-endpoints.",
+      "gridPos": { "x": 0, "y": 95, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(mcp_tool_calls_total{env=~\"$env\"}[5m])) by (tool, result) * 60", "legendFormat": "{{tool}}: {{result}}" } ] },
+
+    { "id": 62, "type": "timeseries", "title": "Обмен MCP-токена на JWT, в минуту",
+      "description": "sum(rate(mcp_token_exchange_total[5m])) by (result) * 60 — вызовы google-auth /internal/mcp/token (ok, invalid — токен отозван или истёк, unavailable — google-auth не ответил); sum(rate(mcp_token_cache_total[5m])) by (result) * 60 — кеш JWT (hit — обмен не нужен, miss — пошли в google-auth).",
+      "gridPos": { "x": 12, "y": 95, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "refId": "A", "expr": "sum(rate(mcp_token_exchange_total{env=~\"$env\"}[5m])) by (result) * 60", "legendFormat": "обмен: {{result}}" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "refId": "B", "expr": "sum(rate(mcp_token_cache_total{env=~\"$env\"}[5m])) by (result) * 60", "legendFormat": "кеш: {{result}}" }
+      ] },
+
+    { "id": 63, "type": "timeseries", "title": "Длительность инструмента — p95 по имени",
+      "description": "histogram_quantile(0.95, sum(rate(mcp_tool_duration_seconds_bucket[5m])) by (le, tool)) — от разбора вызова до ответа, вместе с обменом токена и запросами в wallet-report.",
+      "gridPos": { "x": 0, "y": 103, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.95, sum(rate(mcp_tool_duration_seconds_bucket{env=~\"$env\"}[5m])) by (le, tool))", "legendFormat": "{{tool}}" } ] },
+
+    { "id": 64, "type": "stat", "title": "wallet-mcp — up",
+      "description": "up{job=\"wallet-mcp\"}: 1 — Prometheus скрейпит /metrics, 0 — сервис не отвечает (гейтвей в это время отдаёт 502 на /api/mcp/*, остальной контур работает).",
+      "gridPos": { "x": 8, "y": 103, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "mappings": [{ "type": "value", "options": { "0": { "text": "DOWN" }, "1": { "text": "UP" } } }], "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "background", "graphMode": "none" },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "up{job=\"wallet-mcp\", env=~\"$env\"}", "legendFormat": "{{env}}" } ] },
+
+    { "id": 65, "type": "timeseries", "title": "wallet-mcp — RSS контейнера",
+      "description": "container_memory_rss{image=~\".*/wallet-mcp:.*\"} по image (cAdvisor знает контейнер только по id, см. «RAM по контейнеру»), поэтому переключатель env здесь не действует: контур виден по тегу — rc в test, X.Y.Z в prod; на одном теге линии сливаются. mem_limit — 64 МБ (compose.yaml).",
+      "gridPos": { "x": 16, "y": 103, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "bytes", "max": 67108864, "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(container_memory_rss{image=~\".*/wallet-mcp:.*\"}) by (image)", "legendFormat": "{{image}}" } ] }
   ]
 }
