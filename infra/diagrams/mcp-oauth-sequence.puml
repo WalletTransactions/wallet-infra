@@ -1,0 +1,140 @@
+@startuml wallet-mcp-oauth-sequence
+title WalletTransactions — MCP-клиент (Claude Code) получает JWT по OAuth 2.1 и спрашивает wallet-mcp (ПЛАН, после v1)
+
+skinparam sequenceMessageAlign left
+skinparam wrapWidth 280
+skinparam responseMessageBelowArrow true
+
+actor "Пользователь" as U
+box "Хост пользователя" #F4F6FA
+  participant "Claude Code\nмодель + MCP-транспорт\n(хранилище токенов)" as CC
+  participant "Браузер" as BR
+end box
+participant "wallet-gateway :8090" as GW
+participant "wallet-mcp :8088\nresource server" as MCP
+participant "google-auth :8080\nauthorization server" as AUTH
+participant "Google" as G
+database "Redis\n(коды, refresh,\nMCP-сессии)" as REDIS
+participant "wallet-report :8084" as REPORT
+
+note over U, REPORT
+  ПЛАН. В v1 (OpenSpec: google-auth/add-mcp-personal-tokens, wallet-mcp/add-mcp-read-tools)
+  клиент держит персональный токен wmcp_… из веб-кабинета. OAuth 2.1 заменяет только то, КАК клиент
+  получает свой токен. Задняя половина (обмен на короткий JWT для wallet-report) та же.
+  Предусловие: HTTPS на гейтвее (OAuth 2.1 требует TLS везде, кроме loopback-redirect) —
+  org/docs/TODO_service_auth_tls.md, п. 2.
+  Модель НИКОГДА не видит токены: они живут в транспорте и хранилище Claude Code, а в контекст модели
+  попадают только имена инструментов, аргументы и результаты.
+end note
+
+== 0. Подключение сервера ==
+
+U -> CC : claude mcp add --transport http wallet https://<хост>/api/mcp/
+
+== 1. Обнаружение: первый запрос без токена ==
+
+CC -> GW : POST /api/mcp/  initialize  (без Authorization)
+GW -> MCP : как есть — /api/mcp/ не проходит JWT-гейт
+MCP --> CC : 401\nWWW-Authenticate: Bearer resource_metadata=\n"https://<хост>/.well-known/oauth-protected-resource/api/mcp/"
+CC -> GW : GET /.well-known/oauth-protected-resource/api/mcp/   (RFC 9728)
+GW -> MCP : новый маршрут гейтвея /.well-known/oauth-protected-resource/*
+MCP --> CC : {resource: "https://<хост>/api/mcp/",\n authorization_servers: ["https://<хост>/auth"],\n scopes_supported: ["mcp:read"]}
+CC -> GW : GET /.well-known/oauth-authorization-server/auth   (RFC 8414)
+GW -> AUTH : новый маршрут гейтвея /.well-known/oauth-authorization-server/*
+AUTH --> CC : {issuer, authorization_endpoint: /auth/oauth/authorize,\n token_endpoint: /auth/oauth/token, registration_endpoint,\n code_challenge_methods_supported: ["S256"], ...}
+
+== 2. Регистрация клиента (публичный, без секрета) ==
+
+alt Dynamic Client Registration (RFC 7591)
+  CC -> AUTH : POST /auth/oauth/register\n{client_name: "Claude Code",\n redirect_uris: ["http://127.0.0.1:<порт>/callback"],\n token_endpoint_auth_method: "none"}
+  AUTH --> CC : 201 {client_id}
+else Client ID Metadata Document (новые ревизии спеки MCP)
+  CC -> CC : client_id = https-URL документа клиента
+  note right of AUTH
+    AUTH сам скачивает документ по client_id и берёт из него
+    redirect_uris — нужен выход google-auth в интернет.
+    Какой способ поддерживает клиент — сверить по спецификации MCP
+    и документации Claude Code.
+  end note
+end
+
+== 3. Авторизация: Authorization Code + PKCE в браузере ==
+
+CC -> CC : code_verifier (случайный), code_challenge = S256(code_verifier), state;\nподнять слушатель 127.0.0.1:<порт>
+CC -> BR : открыть https://<хост>/auth/oauth/authorize?response_type=code\n&client_id&redirect_uri=http://127.0.0.1:<порт>/callback\n&code_challenge&code_challenge_method=S256\n&scope=mcp:read&resource=https://<хост>/api/mcp/&state
+BR -> GW : GET /auth/oauth/authorize?…
+GW -> AUTH : /auth/* — без JWT-гейта
+alt нет сессии google-auth
+  AUTH --> BR : вход через Google (как в sequence.puml, шаг 2)
+  BR -> G : OAuth Google
+  G --> AUTH : id_token → сессия пользователя
+end
+AUTH --> BR : экран согласия:\n«Claude Code просит читать отчёты вашего кошелька.\nДоступ до 90 дней, отозвать — Настройки → Устройства»
+U -> BR : Разрешить
+BR -> AUTH : POST /auth/oauth/authorize (согласие)
+AUTH -> REDIS : oauth_code:<sha256> = {client_id, redirect_uri, code_challenge,\nresource, user_id, scope}, TTL 60 с
+AUTH --> BR : 302 http://127.0.0.1:<порт>/callback?code=…&state=…
+BR -> CC : GET /callback?code&state  (loopback, не через гейтвей)
+CC -> CC : state совпал?
+
+== 4. Обмен кода на токены ==
+
+CC -> GW : POST /auth/oauth/token\ngrant_type=authorization_code, code, code_verifier,\nredirect_uri, client_id, resource
+GW -> AUTH : как есть
+AUTH -> REDIS : GETDEL oauth_code:<sha256>  (одноразовость)
+AUTH -> AUTH : S256(code_verifier) == code_challenge,\nredirect_uri, client_id, resource совпадают
+AUTH -> REDIS : device-сессия platform "mcp", имя «Claude Code»;\nrefresh — хэш, семейство = сессия;\nскользящие 30 дней, потолок 90 (как у wmcp_)
+AUTH --> CC : {access_token: JWT RS256 aud=["wallet-mcp"], scope="mcp:read",\n  device_id, platform="mcp", без role, exp +15 мин;\n refresh_token: непрозрачный, ротируемый; expires_in: 900}
+CC -> CC : сохранить токены в своём хранилище —\nне в контекст модели
+
+== 5. Вопрос и вызов инструмента ==
+
+U -> CC : «сколько ушло на няню и еду в сентябре?»
+CC -> CC : модель выбирает инструмент:\nspending_by_category(2026-09-01, 2026-09-30,\n  ["Няня", "Продукты", "Кафе"])
+CC -> GW : POST /api/mcp/  tools/call\nAuthorization: Bearer <access JWT>
+GW -> MCP : как есть
+MCP -> MCP : JWT по JWKS (кеш): подпись, iss, exp,\naud ∋ wallet-mcp, scope ∋ mcp:read
+MCP -> AUTH : POST /internal/mcp/token\ngrant_type=urn:ietf:params:oauth:grant-type:token-exchange\nsubject_token=<access JWT>   (RFC 8693; кеш до exp)
+AUTH -> REDIS : device-сессия ещё жива?
+AUTH --> MCP : JWT aud=["wallet-report"], scope="reports:read",\nбез role, exp +300 с
+note right of MCP
+  Token passthrough запрещён спекой MCP: клиентский JWT
+  (aud=wallet-mcp) в wallet-report не уходит. Своему
+  апстриму wallet-mcp предъявляет отдельный токен.
+end note
+MCP -> REPORT : GET /api/reports/expense-structure?from&to&eq_currency\nBearer <JWT wallet-report>
+REPORT --> MCP : строки категорий (amount_eq — строки от SQL)
+MCP -> MCP : имена → uuid (resolver), итог по трём категориям\nточной десятичной арифметикой
+MCP --> CC : result {period, currency, rows, total}
+CC --> U : «В сентябре: няня 40 000, продукты 18 300, кафе 6 200 — всего 64 500 ₽»
+
+== 6. Access истёк: клиент обновляет сам ==
+
+CC -> GW : POST /api/mcp/  tools/call  (JWT просрочен)
+GW -> MCP : как есть
+MCP --> CC : 401 WWW-Authenticate: Bearer error="invalid_token"
+CC -> GW : POST /auth/oauth/token\ngrant_type=refresh_token, refresh_token, client_id, resource
+GW -> AUTH : как есть
+AUTH -> REDIS : GETDEL refresh (ротация);\nпродлить сессию EXAT min(сейчас + 30 дней, потолок)
+alt refresh действителен
+  AUTH --> CC : новая пара access + refresh
+  CC -> GW : повтор tools/call с новым access
+else refresh уже использован (признак кражи)
+  AUTH -> REDIS : отозвать всё семейство — device-сессию целиком
+  AUTH --> CC : 400 {"error":"invalid_grant"}
+  CC -> BR : снова шаг 3 — вход и согласие
+end
+
+== 7. Отзыв из веб-кабинета ==
+
+U -> BR : Настройки → Устройства → «Claude Code» → Отозвать
+BR -> GW : POST /auth/devices/revoke {token_hash}
+GW -> AUTH : /auth/*
+AUTH -> REDIS : удалить refresh-семейство и device-сессию
+note over MCP, AUTH
+  Refresh больше не обменивается сразу. Выданный access JWT формально живёт до 15 мин,
+  но обмен в wallet-mcp (шаг 5) проверяет сессию: отказ наступает при следующем обмене,
+  то есть не позже срока кеша короткого JWT (≤ 5 мин).
+end note
+
+@enduml

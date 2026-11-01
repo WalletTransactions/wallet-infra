@@ -50,6 +50,7 @@ Postgres — только на `127.0.0.1`, из LAN не виден (`../db/REA
 | `backup.sh <env> [--label <метка>] [<база>...]` | Дамп баз ролью `dumper` в `${WALLET_BACKUP_DIR}`, с ротацией — см. «Дампы» |
 | `release-watch.sh` | Что пора выкатить: новые теги в ghcr и git-теги wallet-infra против контуров; печатает `<env> <сервис> <тег>`, сам не выкатывает — см. «Выкат и откат» |
 | `test-refresh.sh` | Перезаливка данных test из prod с вычисткой — см. «Данные test» |
+| `loadtest_env.sh` | Контур нагрузочных прогонов (только test): подключают скрипты `wallet-api/loadtest` и `wallet-report/loadtest` — см. «Нагрузочные прогоны» |
 | `lib.sh` | Общие функции, подключается через `source` |
 
 `compose.yaml` контура скрипты берут из выкатанного тега wallet-infra —
@@ -261,6 +262,28 @@ Redis, поэтому он доживает свой TTL (15 минут), есл
 
 В test при этом лежат персональные финансовые данные prod — допустимо, пока
 test LAN-only и только у владельца (design D9).
+
+## Нагрузочные прогоны
+
+Нагрузка, сид данных и минтинг токенов (`wallet-api/loadtest`,
+`wallet-report/loadtest`, job'ы `test-*-loadtest`) идут только в test. Их
+скрипты подключают `loadtest_env.sh`, который:
+
+- отказывает для любого контура, кроме test (`LOADTEST_ENV=prod` — ошибка);
+- даёт сеть `wallet-test`, контейнер db test и ключ подписи
+  `~/.config/wallet-secrets/test/jwt_signing_key.pem` (токены принимает
+  гейтвей test, prod — нет);
+- подгружает `db.env` test (`PERF_POSTGRES_*` — база `perf_history` есть только в test);
+- `loadtest_container_id <сервис>` — id контейнера для фильтра cAdvisor
+  (`name=`): по `image` prod и test на одном теге не различить;
+- `loadtest_override <сервис> <ПЕРЕМЕННАЯ> <значение>` и
+  `loadtest_restore <сервис>` — пересоздать сервис test с другим окружением
+  (например, `DATABASE_POOL_SIZE`) под блокировкой контура и вернуть обратно.
+
+```bash
+bash -c 'source infra/env/loadtest_env.sh && loadtest_override wallet-report REPORTS_DB_POOL_SIZE 4'
+bash -c 'source infra/env/loadtest_env.sh && loadtest_restore wallet-report'
+```
 
 ## Контур руками
 

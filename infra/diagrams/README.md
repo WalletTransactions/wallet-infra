@@ -132,6 +132,17 @@ wallet-bff").
   (команда → строгий формат → LLM), трата свободным текстом через
   structured output LM Studio с карточкой подтверждения и записью только по
   кнопке, агентный цикл с read-only инструментами, тот же реестр как MCP.
+  MCP с 2026-10-31 — отдельный сервис `wallet-mcp`, см. следующую схему.
+- **`mcp-oauth-sequence.puml`** — **план, после v1**: MCP-клиент (Claude
+  Code) получает JWT по OAuth 2.1 и задаёт вопрос `wallet-mcp`. Шаги:
+  обнаружение по `401` + `WWW-Authenticate` (RFC 9728/8414) → регистрация
+  публичного клиента (DCR или Client ID Metadata Document) → Authorization
+  Code + PKCE в браузере с экраном согласия google-auth → обмен кода на access
+  (`aud` `wallet-mcp`, 15 мин) и ротируемый refresh → `tools/call`, где
+  `wallet-mcp` меняет клиентский JWT на свой для wallet-report (RFC 8693, без
+  token passthrough) → обновление по refresh и реакция на повторное
+  использование → отзыв из «Моих устройств». В v1 вместо шагов 1–4 — персональный
+  токен `wmcp_…` (OpenSpec `google-auth/add-mcp-personal-tokens`).
 
 ## Как отрендерить
 
