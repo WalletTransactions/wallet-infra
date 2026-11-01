@@ -33,6 +33,7 @@ declare -A WALLET_SERVICE_PORT=(
     [wallet-gateway]=8090
     [wallet-web]=80
     [wallet-telegram]=8086
+    [wallet-mcp]=8088
 )
 
 die() {

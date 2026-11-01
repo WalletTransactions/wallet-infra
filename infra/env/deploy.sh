@@ -4,7 +4,8 @@
 # Использование:
 #   infra/env/deploy.sh <prod|test> <сервис> <тег> [--rollback]
 #     сервис — google-auth, wallet-api, wallet-report, wallet-ai,
-#              wallet-gateway, wallet-web, wallet-telegram или wallet-infra
+#              wallet-gateway, wallet-web, wallet-telegram, wallet-mcp
+#              или wallet-infra
 #     тег    — X.Y.Z-rc.N или X.Y.Z (с "v" или без); в prod — только X.Y.Z
 #     --rollback — ручной откат на ранее выкатанный тег: без миграций и без
 #              гейта (job env-rollback). Миграции при откате не откатываются —
@@ -18,7 +19,8 @@
 #      Упал дамп или миграция — контейнер сервиса не трогается;
 #   5. новый тег в tags.env, compose up только этого сервиса, ждём healthy;
 #   6. smoke: /healthz гейтвея и /version сервиса = версия тега (и коммит
-#      образа, если CI его проставил);
+#      образа, если CI его проставил), затем проверки самого сервиса
+#      (smoke_extra; у wallet-mcp — 401 без токена);
 #   7. не прошло — прежний тег обратно и compose up, job падает;
 #      прошло — digest в verified (для test — пропуск в prod), строка в history.
 #
@@ -93,6 +95,30 @@ smoke_version() {
         echo "smoke: $svc собран из коммита '$commit', а образ помечен '$revision'" >&2
         return 1
     fi
+}
+
+# smoke_extra <сервис> — проверки сверх общего smoke, своя у сервиса; у
+# остальных ничего не делает.
+#   wallet-mcp: анонимный POST /api/mcp/ должен получить 401. Иначе образ
+#   раскрыл бы данные без токена (openspec/changes/add-wallet-mcp-service,
+#   design, решение 4). Запрос — изнутри контейнера wallet-mcp, а не через
+#   гейтвей: при первом выкате гейтвей может ещё не знать /api/mcp/.
+#   Печатается только код ответа, тело не печатается.
+smoke_extra() {
+    local code
+    case "$1" in
+        wallet-mcp)
+            code="$(env_compose exec -T wallet-mcp curl -s -o /dev/null -w '%{http_code}' \
+                -X POST -H 'Content-Type: application/json' \
+                --data '{"jsonrpc":"2.0","id":1,"method":"initialize"}' \
+                http://127.0.0.1:8088/api/mcp/)" || true
+            echo "    POST /api/mcp/ без токена: ${code:-нет ответа}"
+            if [[ "$code" != "401" ]]; then
+                echo "smoke: wallet-mcp без токена ответил ${code:-(нет ответа)}, ожидался 401" >&2
+                return 1
+            fi
+            ;;
+    esac
 }
 
 mark_verified() {
@@ -201,7 +227,8 @@ fi
 prev="$(current_tag "$service")"
 set_tag "$service" "$image_tag"
 if env_compose up -d --no-deps --wait --wait-timeout 180 "$service" \
-        && smoke_gateway && smoke_version "$service" "$version" "$revision"; then
+        && smoke_gateway && smoke_version "$service" "$version" "$revision" \
+        && smoke_extra "$service"; then
     mark_verified "$digest" "$service" "$image_tag"
     log_history "$service" "$image_tag" "$digest" ok
     prune_images "$service"
