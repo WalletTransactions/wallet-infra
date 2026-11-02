@@ -31,7 +31,7 @@
 
 ## 4. Сквозная проверка
 
-- [ ] 4.1 На test после выката всей цепочки (google-auth, wallet-api, wallet-report, wallet-mcp, гейтвей, веб): выпустить токен в вебе, выполнить `initialize` и `tools/call list_wallets` через `http://localhost:8091/api/mcp/`. Проверка: ответ с кошельками; `docker stats` — RSS wallet-mcp в пределах 64 МБ; в логах выката (`history`, вывод Jenkins) нет значений токенов и секретов. — Тест: [wallet-infra#5](https://github.com/WalletTransactions/wallet-infra/issues/5)
+- [x] 4.1 На test после выката всей цепочки (google-auth, wallet-api, wallet-report, wallet-mcp, гейтвей, веб): выпустить токен в вебе, выполнить `initialize` и `tools/call list_wallets` через `http://localhost:8091/api/mcp/`. Проверка: ответ с кошельками; `docker stats` — RSS wallet-mcp в пределах 64 МБ; в логах выката (`history`, вывод Jenkins) нет значений токенов и секретов. — Тест: [wallet-infra#5](https://github.com/WalletTransactions/wallet-infra/issues/5) — проверено 2026-11-02: токен выпущен в вебе (человек), через гейтвей `initialize` 200 → `tools/list` 200 → `tools/call list_wallets` 200 с кошельками; RSS wallet-mcp 5,7 МБ из 64; 15 значений секретов test и MCP-токен не найдены ни в `history`, ни в 226 консольных логах Jenkins (env-deploy, env-release-watch, env-rollback, env-test-refresh)
   Кода нет; проверка при выкате всей цепочки в test.
 
 ## Workflow follow-up
