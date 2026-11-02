@@ -119,8 +119,12 @@ WALLET_AI_TAG=1.0.0-rc.1
 WALLET_GATEWAY_TAG=1.0.0-rc.1
 WALLET_WEB_TAG=1.0.0-rc.1
 WALLET_TELEGRAM_TAG=1.0.0-rc.1
+WALLET_MCP_TAG=0.1.0-rc.1
 EOF
 ```
+
+У wallet-mcp секретов нет — его `.env` в каталог секретов не кладётся:
+адреса соседей задаёт `compose.yaml`.
 
 **4. Запуск:**
 
@@ -183,7 +187,10 @@ bash infra/env/deploy.sh test wallet-infra v0.3.0-rc.1      # описание �
    Не снялся дамп или упала миграция — сервис остаётся на прежнем образе;
 5. новый тег в `tags.env`, пересоздаётся только этот сервис, ждёт healthy;
 6. smoke изнутри гейтвея: `/healthz` гейтвея, `/version` сервиса отдаёт
-   версию тега (и коммит, которым CI пометил образ);
+   версию тега (и коммит, которым CI пометил образ). У wallet-mcp сверх
+   этого — `POST /api/mcp/` без токена изнутри его контейнера должен
+   получить `401`: образ, который отвечает анонимному клиенту иначе, не
+   выкатывается (`smoke: wallet-mcp без токена ответил <код>, ожидался 401`);
 7. не прошло — прежний тег обратно, job падает. Прошло — digest в
    `verified`, строка в `history`, на хосте остаются 3 последних образа сервиса.
 
@@ -195,6 +202,34 @@ bash infra/env/deploy.sh test wallet-infra v0.3.0-rc.1      # описание �
 `vX.Y.Z` → prod, гейт — по коммиту тега): checkout тега, `up.sh` из него,
 smoke гейтвея; не прошло — прежний тег и `up.sh` ещё раз. Версии сервисов
 при этом не меняются — они в `tags.env`, а не в git.
+
+### Новый сервис в контуре
+
+Так подключался wallet-mcp (`openspec/changes/add-wallet-mcp-service`):
+сервис в `compose.yaml`, порт в `WALLET_SERVICE_PORT` (`lib.sh`), цель в
+`infra/monitoring/prometheus.yml`, имя в whitelist
+`infra/logging/fluent-bit.conf`, в `SERVICE` у job'ов `env-deploy` и
+`env-rollback`. Порядок выката в каждом контуре (сначала test, потом prod):
+
+1. CI сервиса публикует первый образ в ghcr (`vX.Y.Z-rc.1`; для prod —
+   финальный `X.Y.Z` после проверки в test).
+2. **До** выката тега wallet-infra с новым сервисом — тег в `tags.env`
+   контура руками, одной строкой (`WALLET_MCP_TAG=0.1.0-rc.1`). Иначе
+   `compose.yaml` с `${WALLET_MCP_TAG:?}` не соберётся, и `up.sh` упадёт
+   на всём контуре. Это единственная ручная правка `tags.env` — дальше её
+   ведёт `deploy.sh`. `up.sh` гейт prod не проверяет, поэтому в prod
+   вписывается только финальный тег, чей rc прошёл test. И вписывается
+   сразу: `release-watch.sh` работает из checkout'а test и, пока у prod
+   нет строки тега, предлагает `prod <сервис> X.Y.Z`. `deploy.sh` prod из
+   старого тега wallet-infra такой сервис не знает и падает каждые 5 минут.
+3. Выкат тега wallet-infra (`deploy.sh <env> wallet-infra <тег>` или
+   `env-release-watch`): `up.sh` поднимает новый сервис.
+4. Следующие теги сервиса катит `env-release-watch` сам.
+
+Откат на тег wallet-infra без сервиса: `up.sh` из прежнего тега убирает
+его контейнер (`--remove-orphans`). Если контейнер остался — `docker rm -f
+wallet-<env>-wallet-mcp-1`. Строку тега в `tags.env` можно не трогать:
+лишняя переменная compose не мешает.
 
 Состояние контура (`~/.local/state/wallet-envs/<env>/`):
 

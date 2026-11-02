@@ -18,7 +18,8 @@ LM Studio, а позже любой MCP-клиент отвечает на во�
   `WALLET_REPORT_URL=http://wallet-report:8084`.
 - Гейтвей получает `WALLET_MCP_URL=http://wallet-mcp:8088` (change
   `wallet-gateway/openspec/changes/add-mcp-route`).
-- Теги образа в `infra/env/{prod,test}.env`, healthcheck по `/healthz`.
+- Тег образа `WALLET_MCP_TAG` в `tags.env` контура (его ведёт `deploy.sh`,
+  первый раз — руками), healthcheck по `/healthz`.
 - Prometheus: цели `wallet-mcp-prod:8088` и `wallet-mcp-test:8088` с меткой
   `env`. В Grafana — панель вызовов инструментов и обменов токена.
 - Выкат: Jenkins-job для тегов `wallet-mcp` по образцу остальных сервисов
@@ -40,8 +41,9 @@ LM Studio, а позже любой MCP-клиент отвечает на во�
 
 ## Impact
 
-- **wallet-infra:** `compose.yaml`, `infra/env/{prod,test}.env`,
-  `infra/monitoring/prometheus.yml` и дашборд, корневой `README.md`.
+- **wallet-infra:** `compose.yaml`, `infra/env/lib.sh`, `infra/env/deploy.sh`,
+  `infra/env/README.md`, `infra/monitoring/prometheus.yml` и дашборд,
+  whitelist контейнеров в `infra/logging/fluent-bit.conf`, корневой `README.md`.
 - **Зависимость:** change `add-prod-test-environments` (контуры, теги образов,
   Jenkins-job'ы по тегам). Если он ещё не завершён, wallet-mcp
   подключается в его текущем виде.
