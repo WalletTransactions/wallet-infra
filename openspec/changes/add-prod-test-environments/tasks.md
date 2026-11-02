@@ -120,7 +120,7 @@
   3. smoke.
 
   Проверка: `curl :8090/healthz` — 200, `/version` каждого сервиса показывает финальную версию.
-- [ ] 7.4 Проверить prod вживую:
+- [ ] 7.4 Проверить prod вживую: — Тест: [wallet-infra#3](https://github.com/WalletTransactions/wallet-infra/issues/3)
   - вход в веб на `:8090`, создание кошелька;
   - выход и вход на Android (Pixel), синк с новым кошельком;
   - привязка @WalletTransaction_bot заново и команда ему;
@@ -139,13 +139,13 @@
 
 ## 9. Сквозная проверка
 
-- [ ] 9.1 Полный цикл на одном сервисе (например, wallet-report):
+- [ ] 9.1 Полный цикл на одном сервисе (например, wallet-report): — Тест: [wallet-infra#4](https://github.com/WalletTransactions/wallet-infra/issues/4)
   1. правка, затем тег `vX.Y.Z-rc.1` — через ≤10 минут работает в test, smoke зелёный;
   2. тег `vX.Y.Z` — через ≤10 минут работает в prod с тем же digest;
   3. ручной откат prod на предыдущую версию.
 
   Проверка: Jenkins показывает все три прогона зелёными, `/version` на `:8090` меняется ожидаемо.
-- [ ] 9.2 Цикл с миграцией (wallet-api, expand-миграция): rc с миграцией в test, затем финальный тег в prod. Проверка: перед миграцией в `${WALLET_BACKUP_DIR}/prod/wallet/` появился дамп с тегом, `schema_migrations` prod показывает новую версию.
+- [ ] 9.2 Цикл с миграцией (wallet-api, expand-миграция): rc с миграцией в test, затем финальный тег в prod. Проверка: перед миграцией в `${WALLET_BACKUP_DIR}/prod/wallet/` появился дамп с тегом, `schema_migrations` prod показывает новую версию. — Тест: [wallet-infra#4](https://github.com/WalletTransactions/wallet-infra/issues/4)
 
 ## Workflow follow-up
 
