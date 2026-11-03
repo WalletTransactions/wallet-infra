@@ -120,7 +120,7 @@
   3. smoke.
 
   Проверка: `curl :8090/healthz` — 200, `/version` каждого сервиса показывает финальную версию.
-- [ ] 7.4 Проверить prod вживую: — Тест: [wallet-infra#3](https://github.com/WalletTransactions/wallet-infra/issues/3)
+- [x] 7.4 Проверить prod вживую: — Тест: [wallet-infra#3](https://github.com/WalletTransactions/wallet-infra/issues/3) — проверено 2026-11-03: прогон владельца на prod (веб, Pixel, бот, AI), закрыто по его подтверждению; следы на prod не сверялись (чтение prod закрыто)
   - вход в веб на `:8090`, создание кошелька;
   - выход и вход на Android (Pixel), синк с новым кошельком;
   - привязка @WalletTransaction_bot заново и команда ему;
