@@ -45,7 +45,10 @@ wallet-gateway) есть версия, проставляемая на билд�
 `compose.yaml`); видно через `GET /version`,
 строку лога при старте и `build_info` в `GET /metrics` — см. README
 google-auth, раздел "Версия", там же весь механизм подробно (у остальных
-сервисов — краткая ссылка туда же).
+сервисов — краткая ссылка туда же). Сводка версий всех сервисов контура —
+`GET /api/versions` гейтвея (только роль `admin`, бейдж версии в углу веба);
+бота гейтвей опрашивает по `WALLET_TELEGRAM_URL` из `compose.yaml`, не
+публикуя его.
 
 Мобильный вход + синхронизация Android SQLite с сервером + веб-отчёты —
 план работ в [TODO_mobile_sync.md](https://github.com/WalletTransactions/.github-private/blob/main/docs/TODO_mobile_sync.md). Мобильный вход и

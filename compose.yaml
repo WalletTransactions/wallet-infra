@@ -338,6 +338,11 @@ services:
       # Гейтвей без маршрута /api/mcp/ лишнюю переменную игнорирует.
       WALLET_MCP_URL: http://wallet-mcp:8088
       WALLET_WEB_URL: http://wallet-web:80
+      # Не маршрут: только опрос /version бота для сводки GET /api/versions
+      # (wallet-gateway openspec/changes/service-versions). Без depends_on —
+      # не ответил бот, в сводке у него "error", гейтвей это не задерживает.
+      # Гейтвей без /api/versions лишнюю переменную игнорирует.
+      WALLET_TELEGRAM_URL: http://wallet-telegram:8086
     depends_on:
       google-auth:
         condition: service_healthy
