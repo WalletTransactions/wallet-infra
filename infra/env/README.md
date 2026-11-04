@@ -123,8 +123,21 @@ WALLET_MCP_TAG=0.1.0-rc.1
 EOF
 ```
 
-У wallet-mcp секретов нет — его `.env` в каталог секретов не кладётся:
-адреса соседей задаёт `compose.yaml`.
+У wallet-mcp `.env` необязателен (`required: false` в `compose.yaml`),
+адреса соседей задаёт `compose.yaml`. Единственный его секрет —
+`AUTH_EXCHANGE_SECRET` (приём JWT для wallet-mcp, change `add-jwt-access`
+wallet-mcp). Обмен токена (RFC 8693) включается тремя файлами одного
+контура, секреты у prod и test разные (`openssl rand -hex 32`):
+
+| Файл | Строка |
+| --- | --- |
+| `google-auth.env` | `TOKEN_EXCHANGE_SECRETS=wallet-ai=<A>,wallet-mcp=<M>` |
+| `wallet-mcp.env` (600) | `AUTH_EXCHANGE_SECRET=<M>` |
+| `wallet-ai.env` | `AUTH_EXCHANGE_SECRET=<A>` |
+
+Без них обмен выключен: google-auth отвечает на `/internal/token/exchange`
+`503`, wallet-mcp принимает только `wmcp_…`. Откат — убрать строки и
+`up.sh <env>`: сервисы пересоздаются с новым окружением.
 
 **4. Запуск:**
 

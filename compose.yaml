@@ -284,11 +284,14 @@ services:
   # MCP-сервер только на чтение (POST /api/mcp/, репозиторий wallet-mcp):
   # LM Studio и другие MCP-клиенты спрашивают о тратах инструментами поверх
   # wallet-report. Доступ — только через гейтвей, на хост порт не
-  # публикуется. Своей базы и Redis нет. Секретов тоже нет — поэтому без
-  # env_file: MCP-токен пользователя (wmcp_…) сам по себе доказывает обмен в
-  # google-auth (/internal/mcp/token) на JWT, которым идут запросы в
-  # wallet-report. Токены изолированы по контурам автоматически: у test свой
-  # ключ подписи JWT и свой Redis.
+  # публикуется. Своей базы и Redis нет. MCP-токен пользователя (wmcp_…) сам
+  # по себе доказывает обмен в google-auth (/internal/mcp/token) на JWT для
+  # wallet-report. Единственный секрет — AUTH_EXCHANGE_SECRET (wallet-mcp
+  # change add-jwt-access): с ним сервис принимает и JWT для wallet-mcp
+  # (обмен через /internal/token/exchange, тот же секрет — у wallet-mcp в
+  # TOKEN_EXCHANGE_SECRETS google-auth). Файла нет — JWT выключен, wmcp_…
+  # работает (required: false). Токены изолированы по контурам
+  # автоматически: у test свой ключ подписи JWT и свой Redis.
   # Гейтвей НЕ зависит от него в depends_on (openspec/changes/
   # add-wallet-mcp-service, design, решение 2): упал wallet-mcp — гейтвей
   # отвечает 502 на /api/mcp/*, а сайт, бот и синк работают.
@@ -296,6 +299,9 @@ services:
     <<: *service
     image: ghcr.io/wallettransactions/wallet-mcp:${WALLET_MCP_TAG:?}
     mem_limit: 64m
+    env_file:
+      - path: ${WALLET_SECRETS_DIR}/wallet-mcp.env
+        required: false
     environment:
       HOST: 0.0.0.0
       PORT: 8088
