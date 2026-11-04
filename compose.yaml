@@ -257,6 +257,11 @@ services:
       AUTH_SERVICE_URL: http://google-auth:8080
       # Справочник счетов пользователя (его токеном) — при создании задания.
       WALLET_REPORT_URL: http://wallet-report:8084
+      # Чат (wallet-ai add-chat-agent): инструменты чтения — через wallet-mcp
+      # напрямую по сети контура, не через гейтвей. Чат включается вместе с
+      # AUTH_EXCHANGE_SECRET в wallet-ai.env (обмен токена пользователя на
+      # JWT для wallet-mcp); без секрета вид chat отвечает 503.
+      WALLET_MCP_URL: http://wallet-mcp:8088/api/mcp/
       # Своя база ai — импорт выписок. Не отвечает — импорт выключен, трата
       # текстом работает.
       DATABASE_URL: postgresql://${AI_POSTGRES_USER}:${AI_POSTGRES_PASSWORD}@db:5432/${AI_POSTGRES_DB}
