@@ -1,0 +1,89 @@
+@startuml wallet-token-exchange-sequence
+title WalletTransactions — обмен токена RFC 8693: чат wallet-ai → wallet-mcp → wallet-report
+
+skinparam sequenceMessageAlign left
+skinparam wrapWidth 300
+skinparam responseMessageBelowArrow true
+
+actor "Пользователь" as U
+participant "wallet-gateway :8090" as GW
+participant "wallet-ai :8087\nactor wallet-ai" as AI
+participant "google-auth :8080\n/internal/token/exchange" as AUTH
+participant "wallet-mcp :8088\nactor wallet-mcp" as MCP
+participant "wallet-report :8084" as REPORT
+
+note over U, REPORT
+  Состояние на 2026-11-04. Шаги 2–5 работают: google-auth 0.2.0 (add-token-exchange) и wallet-mcp 0.2.0
+  (add-jwt-access) проверены в test, в prod ещё не выкачены. Шаг 1 и вызовы из wallet-ai — ПЛАН (wallet-ai
+  add-chat-agent): клиент обмена и MCP-клиент написаны, в задание chat не подключены.
+  Каждый обмен сужает права: новый JWT адресован ОДНОМУ сервису (aud), scope — только нужный ему,
+  role нет, срок не дольше входящего. Claim act записывает, кто действует от имени пользователя.
+  Actor определяется по X-Service-Secret (TOKEN_EXCHANGE_SECRETS в google-auth, AUTH_EXCHANGE_SECRET у
+  сервиса), а не по токену. Пустые секреты — обмен выключен (503), wallet-mcp принимает только wmcp_….
+end note
+
+== 1. Вопрос в чате (план) ==
+
+U -> GW : POST /api/ai/... (cookie session:\naud ∋ wallet-ai, scope ∋ ai:use)
+GW -> AI : JWT-гейт пройден, запрос как есть
+
+== 2. wallet-ai меняет токен пользователя на JWT для wallet-mcp ==
+
+AI -> AUTH : POST /internal/token/exchange\nX-Service-Secret: <секрет wallet-ai>\ngrant_type=urn:ietf:params:oauth:grant-type:token-exchange\nsubject_token=<JWT пользователя>\nsubject_token_type=…:access_token\naudience=wallet-mcp
+activate AUTH
+AUTH -> AUTH : actor по секрету → wallet-ai\nsubject: подпись своим ключом, exp, iss, sub\nполитика: wallet-ai → wallet-mcp требует\nу subject aud ∋ wallet-ai и scope ∋ ai:use
+alt всё сходится
+  AUTH --> AI : 200 {access_token, issued_token_type,\ntoken_type: Bearer, expires_in: 300}\nJWT: aud [wallet-mcp], scope mcp:read,\nact {sub: wallet-ai}, без role
+else неверный секрет
+  AUTH --> AI : 401 {"error":"invalid_client"}
+else audience не по политике (например, wallet-report)
+  AUTH --> AI : 400 {"error":"invalid_target"}
+else subject без нужных aud/scope, чужой, истёк
+  AUTH --> AI : 400 {"error":"invalid_grant"}
+end
+deactivate AUTH
+
+== 3. wallet-ai вызывает инструменты (напрямую, не через гейтвей) ==
+
+AI -> MCP : POST /api/mcp/ initialize → notifications/initialized\n→ tools/list → tools/call\nAuthorization: Bearer <JWT для wallet-mcp>
+activate MCP
+MCP -> MCP : не wmcp_… → проверка JWT ЛОКАЛЬНО:\nkid → ключ из JWKS (загружается при первом JWT),\nподпись RS256, exp, iss, aud ∋ wallet-mcp,\nscope ∋ mcp:read, непустой sub
+alt проверка не прошла
+  MCP --> AI : 401 invalid_token\n(в журнале reason: jwt_wrong_audience,\njwt_signature, jwt_unknown_key, jwt_expired, …)
+end
+
+== 4. wallet-mcp меняет входящий JWT на JWT для wallet-report ==
+
+MCP -> MCP : кеш по SHA-256 входящего токена
+alt промах кеша
+  MCP -> AUTH : POST /internal/token/exchange\nX-Service-Secret: <секрет wallet-mcp>\nsubject_token=<входящий JWT>, audience=wallet-report
+  AUTH --> MCP : 200, JWT: aud [wallet-report], scope reports:read,\nact {sub: wallet-mcp, act {sub: wallet-ai}}, без role
+  MCP -> MCP : в кеш до min(exp двух JWT) − 30 с:\nкеш не продлевает входящий JWT
+end
+
+== 5. Данные ==
+
+MCP -> REPORT : GET /api/reports/...\nAuthorization: Bearer <JWT для wallet-report>
+REPORT --> MCP : 200 JSON
+note right of MCP
+  На 401 wallet-report — один повторный обмен и один
+  повтор вызова на запрос (смена ключа google-auth).
+  Журнал request_finished: credential jwt, actor wallet-ai,
+  user_id из sub; токены в журнал не пишутся.
+  Метрики: mcp_token_exchange_total{kind="jwt"},
+  mcp_tool_calls_total{credential="jwt"}.
+end note
+MCP --> AI : result: текст инструмента
+deactivate MCP
+AI --> GW : ответ модели
+GW --> U : ответ
+
+== Для сравнения: персональный токен (в prod с 0.1.0) ==
+
+note over U, REPORT
+  LM Studio / Claude → GW → wallet-mcp с Bearer wmcp_…: вместо шагов 2–4 wallet-mcp меняет сам токен через
+  POST /internal/mcp/token (без секрета сервиса — сам токен доказывает право) и получает JWT для
+  wallet-report без act, с тем же кешем. Шаг 5 — без изменений; в журнале credential pat.
+end note
+
+@enduml
