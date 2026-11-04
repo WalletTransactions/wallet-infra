@@ -80,6 +80,12 @@ env_check_secrets() {
         mode="$(stat -c %a "$SECRETS_DIR/$f")"
         [[ "$mode" == "$want" ]] || die "права $SECRETS_DIR/$f — $mode, нужно $want (chmod $want)"
     done
+    # Необязательные: нет файла — сервис работает без своего секрета.
+    for f in wallet-mcp.env; do
+        [[ -f "$SECRETS_DIR/$f" ]] || continue
+        mode="$(stat -c %a "$SECRETS_DIR/$f")"
+        [[ "$mode" == "600" ]] || die "права $SECRETS_DIR/$f — $mode, нужно 600 (chmod 600)"
+    done
 }
 
 # env_check_tags — tags.env контура есть (его пишет только deploy.sh).
