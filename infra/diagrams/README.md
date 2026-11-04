@@ -143,6 +143,16 @@ wallet-bff").
   token passthrough) → обновление по refresh и реакция на повторное
   использование → отзыв из «Моих устройств». В v1 вместо шагов 1–4 — персональный
   токен `wmcp_…` (OpenSpec `google-auth/add-mcp-personal-tokens`).
+- **`token-exchange-sequence.puml`** — обмен токена RFC 8693
+  (`POST /internal/token/exchange`, google-auth `add-token-exchange`, wallet-mcp
+  `add-jwt-access`, в test с 2026-11-04): чат `wallet-ai` меняет токен
+  пользователя на JWT для `wallet-mcp` (`mcp:read`, `act` wallet-ai) →
+  `wallet-mcp` проверяет его локально по JWKS и меняет на JWT для
+  `wallet-report` (`reports:read`, `act` wallet-mcp → wallet-ai) → данные.
+  Отказы (`invalid_client`, `invalid_target`, `invalid_grant`, `401` у
+  wallet-mcp с причиной в журнале), кеш, который не продлевает входящий JWT,
+  и для сравнения путь персонального токена `wmcp_…`. Вызовы из `wallet-ai` —
+  план (`add-chat-agent`).
 
 ## Как отрендерить
 
