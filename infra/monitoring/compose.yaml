@@ -145,7 +145,11 @@ services:
       - ./postgres-exporter/queries.yaml:/etc/postgres_exporter/queries.yaml:ro
     command:
       - --auto-discover-databases
-      - --exclude-databases=template0,template1
+      # wallet_api_it — база интеграционных тестов wallet-api: run_local.sh
+      # пересоздаёт её на каждый прогон (без pg_stat_statements), и
+      # --collector.stat_statements писал бы ошибку в журнал Postgres на
+      # каждый опрос (2026-11-04: ~76% всех логов OpenSearch).
+      - --exclude-databases=template0,template1,wallet_api_it
       - --collector.stat_statements
       - --extend.query-path=/etc/postgres_exporter/queries.yaml
     ports:
