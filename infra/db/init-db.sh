@@ -178,6 +178,14 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname postgres \
     -- упал бы: делаем это в самой миграции, не здесь.
 SQL
 
+# --- 1a. pg_stat_statements в maintenance-базе "postgres" ---
+# К ней подключается postgres-exporter (DATA_SOURCE_NAME, см.
+# infra/monitoring/compose.yaml); без представления здесь — ERROR в журнале
+# Postgres на каждый опрос. Причина та же, что в блоке PERF_POSTGRES_DB ниже.
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname postgres <<-'SQL'
+    CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+SQL
+
 # --- 2. Права google-auth (подключение к его собственной базе) ---
 # Схема (roles/users) сюда больше не входит — см. google-auth/migrations/,
 # накатывается отдельно через infra/env/migrate.sh ПОСЛЕ этого bootstrap-шага.
@@ -228,11 +236,15 @@ SQL
 # Схема (test_run/test_result) сюда не входит — см.
 # infra/db/migrations/perf/, накатывается отдельно через
 # `infra/env/migrate.sh <env> perf` ПОСЛЕ этого bootstrap-шага. Никакого
-# pg_stat_statements здесь — эта база не про запросы самого сервиса
-# (метрики уровня приложения из неё же снимает postgres-exporter наравне с
-# auth/wallet), а про историю нагрузочных прогонов.
+# pg_stat_statements здесь не ради статистики (эта база про историю
+# нагрузочных прогонов, а не про запросы сервиса): postgres-exporter с
+# --auto-discover-databases и --collector.stat_statements читает
+# представление в КАЖДОЙ базе, и без расширения пишет ERROR в журнал
+# Postgres на каждый опрос (2026-11-04: ~76% всех логов OpenSearch).
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$PERF_POSTGRES_DB" \
      -v perfuser="$PERF_POSTGRES_USER" <<-'SQL'
+    CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+
     GRANT USAGE ON SCHEMA public TO :"perfuser";
     ALTER DEFAULT PRIVILEGES FOR ROLE :"perfuser" IN SCHEMA public
         GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO :"perfuser";
