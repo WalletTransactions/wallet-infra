@@ -28,8 +28,9 @@
   `infra/env/<env>.env`: сначала test, потом prod.
 - `up.sh` и `migrate.sh` знают базу `docs`, но трогают её только при включённом
   профиле. Миграции берутся из образа `wallet-docs` (`/migrations`), как у остальных.
-- В `wallet-gateway` передаётся `WALLET_DOCS_URL` без `depends_on` (как для
-  `wallet-mcp`): упал `wallet-docs` — гейтвей отвечает 502 на `/api/docs/*`.
+- В `wallet-gateway` передаётся `WALLET_DOCS_URL` как `${WALLET_DOCS_URL-}` без `depends_on`
+  (как для `wallet-mcp`); значение задаётся в `<env>.env` рядом с профилем. Профиль
+  выключен — гейтвей отвечает 404, упал `wallet-docs` — 502 на `/api/docs/*`.
 - Индексы документации не входят в `backup.sh`: они воспроизводимы из Jenkins.
 
 Сам сервис `wallet-docs`, маршрут в гейтвее, заливка из Jenkins и разделы в клиентах —
