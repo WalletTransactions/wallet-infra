@@ -18,11 +18,15 @@
 - **THEN** `up.sh` накатывает миграции базы docs, поднимает `wallet-docs` и ждёт состояния healthy
 
 ### Requirement: Ни один сервис не зависит от wallet-docs
-Ни один другой сервис контура SHALL NOT указывать `wallet-docs` в `depends_on`. Гейтвей SHALL получать адрес сервиса через `WALLET_DOCS_URL` и обращаться к нему на каждый запрос.
+Ни один другой сервис контура SHALL NOT указывать `wallet-docs` в `depends_on`. Гейтвей SHALL получать адрес сервиса через `WALLET_DOCS_URL` и обращаться к нему на каждый запрос. `WALLET_DOCS_URL` SHALL быть непустым только при включённом профиле `docs` (задаётся в `infra/env/<env>.env` рядом с `COMPOSE_PROFILES`).
 
 #### Scenario: Сервис остановлен
-- **WHEN** контейнер `wallet-docs` остановлен или отсутствует
+- **WHEN** профиль `docs` включён, а контейнер `wallet-docs` остановлен
 - **THEN** остальные сервисы остаются healthy, а гейтвей на запрос к `/api/docs/*` отвечает 502
+
+#### Scenario: Профиль выключен
+- **WHEN** профиль `docs` выключен
+- **THEN** гейтвей получает пустой `WALLET_DOCS_URL` и отвечает на `/api/docs/*` `404`
 
 #### Scenario: Старт без docs
 - **WHEN** контур запускается без `wallet-docs`

@@ -9,7 +9,7 @@
 
 - [ ] 2.1 Заменить образ `db` на `docker.io/pgvector/pgvector:pg16`, обновить комментарии шапки (расширение `vector`, роль docs в перечне ролей). Проверка: `grep -n "image:" compose.yaml` показывает новый образ у `db`, `postgres:16-alpine` нет нигде в репозитории.
 - [ ] 2.2 Добавить в `environment` сервиса `db` переменные `DOCS_POSTGRES_USER/PASSWORD/DB` как `${…-}` (пустое по умолчанию). Добавить сервис `wallet-docs` с `profiles: [docs]`, образом `ghcr.io/wallettransactions/wallet-docs:${WALLET_DOCS_TAG:-unset}`, портом 8089, `mem_limit: 128m`, `env_file` секретов (`required: false`), `DATABASE_URL` на базу docs, `AUTH_SERVICE_URL`, `healthcheck` по `/healthz`, alias `wallet-docs-${WALLET_ENV}`. Проверка: `docker compose config` без профиля не содержит `wallet-docs`, с `--profile docs` — содержит.
-- [ ] 2.3 Передать гейтвею `WALLET_DOCS_URL: http://wallet-docs:8089` без `depends_on`, с комментарием по образцу `wallet-mcp`. Проверка: `docker compose --env-file test.env … config` без профиля и без `DOCS_*` проходит без ошибок «переменная не задана» ни для test, ни для prod; в `depends_on` гейтвея нет `wallet-docs`.
+- [ ] 2.3 Передать гейтвею `WALLET_DOCS_URL: ${WALLET_DOCS_URL-}` без `depends_on`, с комментарием по образцу `wallet-mcp`. Проверка: `docker compose --env-file test.env … config` без профиля и без `DOCS_*` проходит без ошибок «переменная не задана» ни для test, ни для prod; в `depends_on` гейтвея нет `wallet-docs`, а `WALLET_DOCS_URL` у гейтвея пуст.
 
 ## 3. init-db.sh (D5)
 
@@ -35,5 +35,5 @@
 
 ## Workflow follow-up
 
-- Включить `COMPOSE_PROFILES=docs` в `test.env`, а затем в `prod.env` — после публикации образа `wallet-docs` (отдельный change в репозитории сервиса).
+- Включить `COMPOSE_PROFILES=docs` и `WALLET_DOCS_URL=http://wallet-docs:8089` в `test.env`, а затем в `prod.env` — после публикации образа `wallet-docs` (отдельный change в репозитории сервиса).
 - После выката всех частей фичи архивировать change.
