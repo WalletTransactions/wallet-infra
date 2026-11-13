@@ -139,13 +139,13 @@
 
 ## 9. Сквозная проверка
 
-- [ ] 9.1 Полный цикл на одном сервисе (например, wallet-report): — Тест: [wallet-infra#4](https://github.com/WalletTransactions/wallet-infra/issues/4)
+- [ ] 9.1 (2026-11-13: шаги 1–2 пройдены на wallet-report — `0.3.0-rc.1` в test, `v0.3.0` → prod `env-deploy #96` через ~2 мин после тега, digest `sha256:e475b74…` тот же, `/version` prod: `version 0.3.0`, `build 0.3.0-rc.1`; осталось — шаг 3, ручной откат prod через `env-rollback`) Полный цикл на одном сервисе (например, wallet-report): — Тест: [wallet-infra#4](https://github.com/WalletTransactions/wallet-infra/issues/4)
   1. правка, затем тег `vX.Y.Z-rc.1` — через ≤10 минут работает в test, smoke зелёный;
   2. тег `vX.Y.Z` — через ≤10 минут работает в prod с тем же digest;
   3. ручной откат prod на предыдущую версию.
 
   Проверка: Jenkins показывает все три прогона зелёными, `/version` на `:8090` меняется ожидаемо.
-- [ ] 9.2 Цикл с миграцией (wallet-api, expand-миграция): rc с миграцией в test, затем финальный тег в prod. Проверка: перед миграцией в `${WALLET_BACKUP_DIR}/prod/wallet/` появился дамп с тегом, `schema_migrations` prod показывает новую версию. — Тест: [wallet-infra#4](https://github.com/WalletTransactions/wallet-infra/issues/4)
+- [x] 9.2 (2026-11-13: wallet-api `0.4.1-rc.1` с миграцией 000037 `default_reference_icons` в test → `v0.4.1` → prod `env-deploy #97` через ~4 мин после тега; дамп `20261113T133423_wallet-api-0.4.1.dump` до миграции, `schema_migrations` prod 36 → 37 без dirty, общих иконок 0 → 87, digest `sha256:9dbf483…` тот же, что в test) Цикл с миграцией (wallet-api, expand-миграция): rc с миграцией в test, затем финальный тег в prod. Проверка: перед миграцией в `${WALLET_BACKUP_DIR}/prod/wallet/` появился дамп с тегом, `schema_migrations` prod показывает новую версию. — Тест: [wallet-infra#4](https://github.com/WalletTransactions/wallet-infra/issues/4)
 
 ## Workflow follow-up
 
