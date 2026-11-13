@@ -83,6 +83,7 @@ env_check_secrets() {
         mode="$(stat -c %a "$SECRETS_DIR/$f")"
         [[ "$mode" == "$want" ]] || die "права $SECRETS_DIR/$f — $mode, нужно $want (chmod $want)"
     done
+    env_check_db_env_values "$SECRETS_DIR/db.env"
     # Необязательные: нет файла — сервис работает без своего секрета.
     for f in wallet-mcp.env wallet-docs.env; do
         [[ -f "$SECRETS_DIR/$f" ]] || continue
@@ -99,6 +100,32 @@ env_docs_enabled() {
     profiles="$(sed -n 's/^COMPOSE_PROFILES=//p' "$COMPOSE_DIR/infra/env/$ENV_NAME.env" 2>/dev/null | tail -n1)"
     profiles="${profiles// /}"
     [[ ",$profiles," == *,docs,* ]]
+}
+
+# env_check_db_env_values <файл> — значения *_USER, *_PASSWORD и *_DB в
+# db.env только из [A-Za-z0-9._~-]: из них собираются URL подключения
+# (postgres://user:pass@db/base), а символ вне этого набора URL ломает.
+# Авария 2026-11-13: кириллическая «а» в MIGRATOR_POSTGRES_PASSWORD prod —
+# migrate.sh упал после down контура, и откат упал на том же секрете.
+# Проверка идёт до любых действий с контуром. В сообщении — только ключ и
+# номер строки, значение не печатается. Пустое значение не ошибка: так
+# выглядят необязательные DOCS_* (обязательные ловит ${VAR:?} compose).
+env_check_db_env_values() {
+    local file="$1" n=0 line key value bad=()
+    # Байтовое сравнение: кириллица и прочий UTF-8 не попадают в [A-Za-z].
+    local LC_ALL=C
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        n=$((n + 1))
+        [[ "$line" =~ ^[[:space:]]*(#|$) ]] && continue
+        [[ "$line" =~ ^([A-Z0-9_]+_(USER|PASSWORD|DB))=(.*)$ ]] || continue
+        key="${BASH_REMATCH[1]}"
+        value="${BASH_REMATCH[3]}"
+        [[ -z "$value" ]] && continue
+        [[ "$value" =~ ^[A-Za-z0-9._~-]+$ ]] || bad+=("$key (строка $n)")
+    done < "$file"
+    if [[ ${#bad[@]} -gt 0 ]]; then
+        die "в $file недопустимые символы в: ${bad[*]} — только [A-Za-z0-9._~-] (например, openssl rand -hex 24); значения не печатаются"
+    fi
 }
 
 # env_check_tags — tags.env контура есть (его пишет только deploy.sh).
