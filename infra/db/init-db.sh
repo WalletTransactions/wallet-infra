@@ -281,3 +281,44 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$AI_POSTGRES_DB" \
     ALTER DEFAULT PRIVILEGES IN SCHEMA public
         GRANT USAGE ON SEQUENCES TO :"aiuser";
 SQL
+
+# --- 7. wallet-docs — НЕОБЯЗАТЕЛЬНЫЙ модуль (change wallet-docs-assistant, D5) ---
+# Блок выполняется, только если в db.env контура заданы все три
+# DOCS_POSTGRES_*; иначе пропускается целиком (без вывода значений).
+# Роль, база и права — как у сервисов выше; отличия:
+#   - CREATE EXTENSION vector — здесь, под мигратором (суперпользователь):
+#     роль сервиса его создать не может, а миграции wallet-docs только
+#     используют тип vector (migrations/ в образе wallet-docs);
+#   - dumper CONNECT НЕ получает: индекс не бэкапится, его пересобирает
+#     заливка из Jenkins (infra/env/docs-index.sh).
+# Идемпотентен, как и весь скрипт: повторный запуск ничего не меняет.
+if [ -n "${DOCS_POSTGRES_USER:-}" ] && [ -n "${DOCS_POSTGRES_PASSWORD:-}" ] && [ -n "${DOCS_POSTGRES_DB:-}" ]; then
+    psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname postgres \
+         -v docsuser="$DOCS_POSTGRES_USER" -v docspass="$DOCS_POSTGRES_PASSWORD" \
+         -v docsdb="$DOCS_POSTGRES_DB" -v monuser="$MONITORING_POSTGRES_USER" <<-'SQL'
+    SELECT 'CREATE ROLE ' || quote_ident(:'docsuser') || ' LOGIN PASSWORD ' || quote_literal(:'docspass')
+    WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = :'docsuser')\gexec
+
+    SELECT 'CREATE DATABASE ' || quote_ident(:'docsdb')
+    WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = :'docsdb')\gexec
+
+    REVOKE CONNECT ON DATABASE :"docsdb" FROM PUBLIC;
+    GRANT CONNECT ON DATABASE :"docsdb" TO :"docsuser";
+    GRANT CONNECT ON DATABASE :"docsdb" TO :"monuser";
+SQL
+
+    psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$DOCS_POSTGRES_DB" \
+         -v docsuser="$DOCS_POSTGRES_USER" <<-'SQL'
+    CREATE EXTENSION IF NOT EXISTS vector;
+    -- Ради postgres-exporter, как в блоке PERF_POSTGRES_DB выше.
+    CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+
+    GRANT USAGE ON SCHEMA public TO :"docsuser";
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public
+        GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO :"docsuser";
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public
+        GRANT USAGE ON SEQUENCES TO :"docsuser";
+SQL
+else
+    echo "init-db: DOCS_POSTGRES_* не заданы — база wallet-docs пропущена"
+fi

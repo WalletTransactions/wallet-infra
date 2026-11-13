@@ -244,6 +244,55 @@ smoke гейтвея; не прошло — прежний тег и `up.sh` е�
 wallet-<env>-wallet-mcp-1`. Строку тега в `tags.env` можно не трогать:
 лишняя переменная compose не мешает.
 
+### Необязательный модуль wallet-docs
+
+`wallet-docs` (справка по OpenSpec-спекам, change `wallet-docs-assistant`)
+живёт в compose-профиле `docs`. Нет профиля — нет сервиса: `up.sh`,
+`deploy.sh` других сервисов, бэкап и гейтвей работают как без него. Модуль
+включается **двумя строками вместе** в `infra/env/<env>.env`:
+
+```bash
+COMPOSE_PROFILES=docs
+WALLET_DOCS_URL=http://wallet-docs:8089
+```
+
+`WALLET_DOCS_URL` без профиля не задают: тогда гейтвей отвечает на
+`/api/docs/*` `404 gateway: docs не подключён` (клиенты прячут раздел), а не
+`502` на несуществующее имя.
+
+Поведение скриптов:
+
+| Скрипт | Профиль выключен | Профиль включён |
+| --- | --- | --- |
+| `up.sh` | пишет «docs пропущен» | миграции базы docs из образа и сервис — если в `db.env` есть `DOCS_POSTGRES_DB`, а в `tags.env` — `WALLET_DOCS_TAG`; чего-то нет — «docs пропущен», профиль на этот запуск выключается |
+| `deploy.sh <env> wallet-docs <тег>` | отказ, контур не меняется | как у остальных; в prod без дампа (индекс не бэкапится) |
+| `migrate.sh <env> docs` | без `DOCS_POSTGRES_DB` в `db.env` — ошибка | миграции из образа `wallet-docs` |
+| `backup.sh <env> docs` | отказ: индекс не бэкапится | то же |
+
+Включение — сначала test, потом prod:
+
+1. **pgvector.** Образ `db` сменился, том `db-data` пересоздаётся (см.
+   `../db/README.md`). test: `backup.sh test --label pre-pgvector`, `down`,
+   `docker volume rm wallet-test_db-data`, `up.sh test`, `test-refresh.sh`.
+   prod — в согласованное окно: `backup.sh prod --label pre-pgvector`,
+   проверка дампов `pg_restore -l`, замена тома, `up.sh prod`, восстановление.
+2. **База.** `DOCS_POSTGRES_USER/PASSWORD/DB` в `db.env` контура (права
+   600, значения не печатать), `up.sh <env>` (контейнер `db` получит новые
+   переменные), затем `migrate.sh <env> docs`: база и расширение
+   создаются (`init-db.sh`); пока нет тега `wallet-docs`, скрипт после этого
+   сообщает «нет тега» — это ожидаемо.
+3. **Сервис.** Первый образ в ghcr; `WALLET_DOCS_TAG=<тег>` в `tags.env`
+   руками (как у нового сервиса выше), `wallet-docs.env` (600: `INDEX_TOKEN`,
+   `LLM_URL`, `LLM_MODEL`, `EMBED_MODEL`; нет файла — вопросы и заливка
+   отвечают 503), две строки в `<env>.env`, тег wallet-infra и его выкат.
+4. Заливка индекса — `docs-index.sh` (change `docs-index-upload`).
+
+Выключение — убрать обе строки из `<env>.env` и выкатить тег wallet-infra;
+если контейнер остался — `docker rm -f wallet-<env>-wallet-docs-1`. Секреты
+`DOCS_*` можно не трогать: без профиля они ничего не включают. Откат pgvector
+— образ `postgres:16-alpine`, пересоздание тома и восстановление дампов
+`pre-pgvector`.
+
 Состояние контура (`~/.local/state/wallet-envs/<env>/`):
 
 | Файл | Что |
