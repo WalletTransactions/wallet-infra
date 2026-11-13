@@ -25,7 +25,8 @@
 # если их ещё нет:
 #   bash infra/monitoring/up.sh
 #
-# Открывать в браузере: http://localhost:13000 (Grafana, admin/admin),
+# Открывать в браузере: http://localhost:13000 (Grafana, admin + пароль из
+# ~/.config/wallet-secrets/monitoring.env),
 # http://localhost:19090 (Prometheus).
 name: wallet-monitoring
 
@@ -220,16 +221,22 @@ services:
   # grafana/dashboards/wallet-overview.json) — CPU/RAM/RPS/latency p50-p99/
   # DB connections/DB latency/сеть/errors одним экраном. Источник данных и
   # сам дашборд заводятся сами при старте контейнера (см.
-  # grafana/provisioning/) — руками добавлять ничего не нужно. admin/admin —
-  # дефолтный логин ТОЛЬКО для локальной разработки, смените пароль при
-  # первом входе (или переопределите GF_SECURITY_ADMIN_PASSWORD здесь же для
-  # стенда с реальными данными).
+  # grafana/provisioning/) — руками добавлять ничего не нужно.
+  #
+  # Пароли — не в репозитории (он публичный), их подставляет up.sh:
+  # GRAFANA_ADMIN_PASSWORD — из ~/.config/wallet-secrets/monitoring.env;
+  # PERF_READER_POSTGRES_PASSWORD — из db.env контура test, им datasource.yml
+  # ходит в perf_history. GF_SECURITY_ADMIN_PASSWORD Grafana применяет только
+  # при создании своей базы на томе grafana-data, поэтому up.sh после старта
+  # ещё и перезадаёт пароль admin командой grafana cli — так смена пароля в
+  # monitoring.env доезжает и до уже существующего тома.
   grafana:
     image: docker.io/grafana/grafana:11.1.0
     restart: "no"
     environment:
       GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?запускайте через infra/monitoring/up.sh}
+      PERF_READER_POSTGRES_PASSWORD: ${PERF_READER_POSTGRES_PASSWORD:?запускайте через infra/monitoring/up.sh}
       GF_USERS_ALLOW_SIGN_UP: "false"
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
@@ -238,7 +245,7 @@ services:
     depends_on:
       - prometheus
     ports:
-      - "13000:3000" # открывать в браузере: http://localhost:13000 (admin/admin)
+      - "13000:3000" # открывать в браузере: http://localhost:13000 (пароль admin — monitoring.env)
     networks:
       - monitoring
       # perf_history (datasource "Perf History") — только в контуре test.

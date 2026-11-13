@@ -44,10 +44,10 @@ datasources:
       postgresVersion: 1600
       timescaledb: false
     secureJsonData:
-      # Пароль в репозитории — тот же осознанный компромисс, что и у
-      # wallet_reader (wallet-api/schema/role/wallet_reader.sql): роль умеет
-      # только SELECT, секрета в привычном смысле тут нет. Для стенда с
-      # реальными данными меняется вместе с паролем самой роли (см.
-      # ALTER ROLE в infra/db/migrations/perf/000001_init.up.sql).
-      password: perf_reader
+      # Пароль — из окружения контейнера Grafana (Grafana раскрывает $VAR в
+      # файлах провижининга): compose.yaml берёт его из db.env контура test
+      # через up.sh, а infra/env/migrate.sh test perf выставляет тот же пароль
+      # роли perf_reader после каждого наката (литерал из миграции
+      # perf/000001_init.up.sql — только для локальной разработки).
+      password: $PERF_READER_POSTGRES_PASSWORD
     editable: false

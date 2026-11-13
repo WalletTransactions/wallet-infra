@@ -32,6 +32,7 @@ Postgres — только на `127.0.0.1`, из LAN не виден (`../db/REA
 | Пароли ролей Postgres | `~/.config/wallet-secrets/<env>/db.env` | нет |
 | Секреты и настройки сервисов | `~/.config/wallet-secrets/<env>/<сервис>.env` | нет |
 | Ключ подписи JWT google-auth | `~/.config/wallet-secrets/<env>/jwt_signing_key.pem` | нет |
+| Пароль admin Grafana (общий на оба контура, `infra/monitoring/up.sh`) | `~/.config/wallet-secrets/monitoring.env` | нет |
 
 Каталоги переопределяются переменными `WALLET_SECRETS_ROOT` и
 `WALLET_STATE_ROOT` (так делает Jenkins: каталоги смонтированы в его

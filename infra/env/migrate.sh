@@ -61,9 +61,22 @@ database_url="postgres://${MIGRATOR_POSTGRES_USER}:${MIGRATOR_POSTGRES_PASSWORD}
 
 if [[ "$base" == "perf" ]]; then
     echo "==> [$ENV_NAME] $base: migrate $* (infra/db/migrations/perf)"
-    exec docker run --rm --network "wallet-$ENV_NAME" \
+    docker run --rm --network "wallet-$ENV_NAME" \
         -v "$COMPOSE_DIR/infra/db/migrations/perf:/migrations:ro" \
         docker.io/migrate/migrate:v4.18.3 -path=/migrations -database "$database_url" "$@"
+    # perf_reader (под ней Grafana читает историю прогонов) миграция perf
+    # создаёт с паролем-литералом для локальной разработки — как wallet_reader
+    # ниже. Репозиторий публичный, поэтому перезадаём после КАЖДОГО наката из
+    # db.env; пароль идёт в psql через окружение, не аргументом.
+    [[ -n "${PERF_READER_POSTGRES_PASSWORD:-}" ]] \
+        || die "в $SECRETS_DIR/db.env не задан PERF_READER_POSTGRES_PASSWORD"
+    PERF_READER_PW="$PERF_READER_POSTGRES_PASSWORD" docker exec -i -e PERF_READER_PW "$db_container" \
+        sh -c 'psql -v ON_ERROR_STOP=1 -q -U "$POSTGRES_USER" -d postgres -v pw="$PERF_READER_PW"' <<'SQL'
+SELECT format('ALTER ROLE perf_reader PASSWORD %L', :'pw')
+WHERE EXISTS (SELECT FROM pg_roles WHERE rolname = 'perf_reader')\gexec
+SQL
+    echo "==> [$ENV_NAME] пароль perf_reader задан из db.env"
+    exit 0
 fi
 
 if [[ "$image" == "-" ]]; then
