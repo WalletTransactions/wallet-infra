@@ -7,6 +7,13 @@
 #   docker compose -f infra/logging/compose.yaml up -d
 #
 # Открывать в браузере: http://localhost:15601 (OpenSearch Dashboards).
+#
+# По умолчанию НЕ запущен: restart "no" у всех сервисов, после перезагрузки
+# хоста стек не поднимается (OpenSearch+Dashboards ~1.3 ГБ RAM на хосте с
+# 14 ГБ — 2026-11-13 хост дважды завис по памяти). Приложение от стека не
+# зависит: логи остаются в journald (`journalctl CONTAINER_NAME=...`), а
+# Fluent Bit при запуске дочитывает пропущенное по курсору (DB в
+# fluent-bit.conf). Гасить: docker compose -f infra/logging/compose.yaml stop
 name: wallet-logging
 
 services:
@@ -28,7 +35,7 @@ services:
   # всё равно выключен в рантайме, это заглушка для прохождения проверки.
   opensearch:
     image: docker.io/opensearchproject/opensearch:2
-    restart: unless-stopped
+    restart: "no"
     environment:
       - discovery.type=single-node
       - plugins.security.disabled=true
@@ -48,7 +55,7 @@ services:
 
   opensearch-dashboards:
     image: docker.io/opensearchproject/opensearch-dashboards:2
-    restart: unless-stopped
+    restart: "no"
     environment:
       OPENSEARCH_HOSTS: http://opensearch:9200
       DISABLE_SECURITY_DASHBOARDS_PLUGIN: "true"
@@ -109,13 +116,16 @@ services:
   # контуров); поле env — контур, по тому же префиксу.
   fluent-bit:
     image: docker.io/fluent/fluent-bit:3.1
-    restart: unless-stopped
+    restart: "no"
     volumes:
       - /etc/machine-id:/etc/machine-id:ro
       - /var/log/journal:/var/log/journal:ro
       - /run/log/journal:/run/log/journal:ro
       - ./fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
       - ./parsers.conf:/fluent-bit/etc/parsers.conf:ro
+      # Курсор journald (DB в fluent-bit.conf) — переживает пересоздание
+      # контейнера, чтобы после простоя стека дочитать пропущенные логи.
+      - fluent-bit-state:/fluent-bit/state
     depends_on:
       opensearch-init:
         condition: service_completed_successfully
@@ -125,3 +135,4 @@ volumes:
   # "servers"; так накопленные индексы переехали вместе со стеком.
   opensearch-data:
     name: servers_opensearch-data
+  fluent-bit-state:

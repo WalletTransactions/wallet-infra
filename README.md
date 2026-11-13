@@ -91,7 +91,10 @@ docker по одному [`compose.yaml`](compose.yaml):
 (см. [infra/db/README.md](infra/db/README.md), «Подключение к базе контура»).
 
 Логи и метрики — общие на оба контура стеки `wallet-logging` и
-`wallet-monitoring` (контур различается полем/меткой `env`):
+`wallet-monitoring` (контур различается полем/меткой `env`). По умолчанию
+оба выключены (`restart: "no"`, после перезагрузки не поднимаются) и
+запускаются вручную, когда нужны; контуры от них не зависят — логи всё
+время пишутся в journald, Fluent Bit при запуске дочитывает пропущенное:
 
 ```bash
 docker compose -f infra/logging/compose.yaml up -d      # OpenSearch Dashboards: http://localhost:15601

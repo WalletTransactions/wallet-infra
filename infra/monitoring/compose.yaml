@@ -5,6 +5,11 @@
 # у ЭТОГО запроса", эти — на "что происходит с системой прямо сейчас/за
 # последний час".
 #
+# По умолчанию НЕ запущен: restart "no" у всех сервисов, после перезагрузки
+# хоста стек не поднимается — поднимать вручную `bash infra/monitoring/up.sh`
+# (гасить: docker compose -p wallet-monitoring stop). Контуры от стека не
+# зависят: связь односторонняя, Prometheus сам скрейпит сервисы.
+#
 # Один стек на ОБА контура (prod и test, design D11 в
 # openspec/changes/add-prod-test-environments). Контур различается меткой
 # env="prod"/"test": Prometheus подключён к сетям wallet-prod и wallet-test
@@ -71,7 +76,7 @@ services:
   # ниже (node-exporter), он видит хост целиком, не по контейнерам.
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:v0.49.1
-    restart: unless-stopped
+    restart: "no"
     privileged: true
     volumes:
       - /:/rootfs:ro
@@ -98,7 +103,7 @@ services:
   # фолбэк, если разбивка по контейнерам недоступна.
   node-exporter:
     image: docker.io/prom/node-exporter:v1.8.2
-    restart: unless-stopped
+    restart: "no"
     volumes:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
@@ -138,7 +143,7 @@ services:
   # db-<env> в сети контура. Порт хоста — только на 127.0.0.1.
   postgres-exporter-prod: &postgres-exporter
     image: docker.io/prometheuscommunity/postgres-exporter:v0.15.0
-    restart: unless-stopped
+    restart: "no"
     environment:
       DATA_SOURCE_NAME: postgresql://${PROD_MONITORING_POSTGRES_USER:?}:${PROD_MONITORING_POSTGRES_PASSWORD:?}@db-prod:5432/${PROD_MIGRATOR_POSTGRES_DB:?}?sslmode=disable
     volumes:
@@ -173,7 +178,7 @@ services:
   # commands_processed_total и т.п.). Без depends_on — см. postgres-exporter.
   redis-exporter-prod:
     image: docker.io/oliver006/redis_exporter:v1.62.0
-    restart: unless-stopped
+    restart: "no"
     environment:
       REDIS_ADDR: redis://redis-prod:6379
     ports:
@@ -184,7 +189,7 @@ services:
 
   redis-exporter-test:
     image: docker.io/oliver006/redis_exporter:v1.62.0
-    restart: unless-stopped
+    restart: "no"
     environment:
       REDIS_ADDR: redis://redis-test:6379
     ports:
@@ -200,7 +205,7 @@ services:
   # Grafana ниже, не автоматика с пейджингом.
   prometheus:
     image: docker.io/prom/prometheus:v2.53.0
-    restart: unless-stopped
+    restart: "no"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
@@ -221,7 +226,7 @@ services:
   # стенда с реальными данными).
   grafana:
     image: docker.io/grafana/grafana:11.1.0
-    restart: unless-stopped
+    restart: "no"
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: admin
