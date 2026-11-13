@@ -4,8 +4,8 @@
 # Использование:
 #   infra/env/deploy.sh <prod|test> <сервис> <тег> [--rollback]
 #     сервис — google-auth, wallet-api, wallet-report, wallet-ai,
-#              wallet-gateway, wallet-web, wallet-telegram, wallet-mcp
-#              или wallet-infra
+#              wallet-gateway, wallet-web, wallet-telegram, wallet-mcp,
+#              wallet-docs (только при профиле docs) или wallet-infra
 #     тег    — X.Y.Z-rc.N или X.Y.Z (с "v" или без); в prod — только X.Y.Z
 #     --rollback — ручной откат на ранее выкатанный тег: без миграций и без
 #              гейта (job env-rollback). Миграции при откате не откатываются —
@@ -191,6 +191,11 @@ if [[ "$service" == "wallet-infra" ]]; then
 fi
 
 [[ -n "${WALLET_SERVICE_PORT[$service]:-}" ]] || die "неизвестный сервис '$service'"
+# wallet-docs — необязательный модуль: без профиля docs его в контуре нет, и
+# выкат ничего не меняет (change wallet-docs-assistant, задача 4.3).
+if [[ "$service" == "wallet-docs" ]] && ! env_docs_enabled; then
+    die "профиль docs в infra/env/$ENV_NAME.env выключен — wallet-docs не выкатывается (COMPOSE_PROFILES=docs, см. infra/env/README.md)"
+fi
 
 image="$(image_of "$service" "$image_tag")"
 echo "==> [$ENV_NAME] $service → $image_tag"
@@ -212,7 +217,9 @@ for b in "${!WALLET_DB_SERVICE[@]}"; do
     [[ "${WALLET_DB_SERVICE[$b]}" == "$service" ]] && base="$b"
 done
 if [[ -n "$base" && $rollback -eq 0 ]]; then
-    if [[ "$ENV_NAME" == "prod" ]]; then
+    # Индекс docs не бэкапится (воспроизводим заливкой, dumper к базе не
+    # подключается) — дамп перед миграцией только у остальных баз.
+    if [[ "$ENV_NAME" == "prod" && "$base" != "docs" ]]; then
         bash "$WALLET_INFRA_DIR/infra/env/backup.sh" prod --label "${service}-${image_tag}" "$base" || {
             log_history "$service" "$image_tag" "$digest" "failed: backup"
             die "дамп $base не снят — миграции и выкат не выполняются"

@@ -34,6 +34,7 @@ fi
 bases=("$@")
 [[ ${#bases[@]} -gt 0 ]] || bases=(auth wallet telegram ai)
 for base in "${bases[@]}"; do
+    [[ "$base" != "docs" ]] || die "индекс docs не бэкапится — он пересобирается заливкой (infra/env/docs-index.sh)"
     [[ -n "${WALLET_DB_SERVICE[$base]:-}" ]] || die "база должна быть auth, wallet, telegram или ai, а не '$base'"
 done
 

@@ -37,6 +37,20 @@ done
 if [[ "$ENV_NAME" == "test" ]]; then
     bash "$WALLET_INFRA_DIR/infra/env/migrate.sh" "$ENV_NAME" perf
 fi
+# docs — необязательный модуль (change wallet-docs-assistant, design D6):
+# миграции и сервис — только при включённом профиле, заданной базе в db.env и
+# теге образа в tags.env. Профиль включён, а чего-то нет — профиль на этот
+# запуск выключается (COMPOSE_PROFILES процесса сильнее --env-file), иначе
+# compose тянул бы образ wallet-docs:unset и весь up падал.
+docs_db="$(sed -n 's/^DOCS_POSTGRES_DB=//p' "$SECRETS_DIR/db.env" | tail -n1)"
+if env_docs_enabled && [[ -n "$docs_db" && -n "$(current_tag wallet-docs)" ]]; then
+    bash "$WALLET_INFRA_DIR/infra/env/migrate.sh" "$ENV_NAME" docs
+elif env_docs_enabled; then
+    echo "==> [$ENV_NAME] docs пропущен: профиль включён, но нет DOCS_POSTGRES_DB в db.env или тега wallet-docs в tags.env"
+    export COMPOSE_PROFILES=
+else
+    echo "==> [$ENV_NAME] docs пропущен: профиль docs выключен"
+fi
 
 echo "==> [$ENV_NAME] сервисы"
 env_compose up -d --wait --wait-timeout 300 --remove-orphans

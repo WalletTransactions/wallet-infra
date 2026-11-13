@@ -20,6 +20,8 @@ declare -A WALLET_DB_SERVICE=(
     [wallet]=wallet-api
     [telegram]=wallet-telegram
     [ai]=wallet-ai
+    # Необязательная: только при включённом профиле docs (env_docs_enabled).
+    [docs]=wallet-docs
 )
 
 # Сервисы, которые выкатываются по тегам, и порт их GET /version внутри
@@ -34,6 +36,7 @@ declare -A WALLET_SERVICE_PORT=(
     [wallet-web]=80
     [wallet-telegram]=8086
     [wallet-mcp]=8088
+    [wallet-docs]=8089
 )
 
 die() {
@@ -81,11 +84,21 @@ env_check_secrets() {
         [[ "$mode" == "$want" ]] || die "права $SECRETS_DIR/$f — $mode, нужно $want (chmod $want)"
     done
     # Необязательные: нет файла — сервис работает без своего секрета.
-    for f in wallet-mcp.env; do
+    for f in wallet-mcp.env wallet-docs.env; do
         [[ -f "$SECRETS_DIR/$f" ]] || continue
         mode="$(stat -c %a "$SECRETS_DIR/$f")"
         [[ "$mode" == "600" ]] || die "права $SECRETS_DIR/$f — $mode, нужно 600 (chmod 600)"
     done
+}
+
+# env_docs_enabled — профиль docs включён в настройках контура: строка
+# COMPOSE_PROFILES=…docs… в infra/env/<env>.env (change wallet-docs-assistant,
+# design D4). Читается из того же каталога, что и compose.yaml (COMPOSE_DIR).
+env_docs_enabled() {
+    local profiles
+    profiles="$(sed -n 's/^COMPOSE_PROFILES=//p' "$COMPOSE_DIR/infra/env/$ENV_NAME.env" 2>/dev/null | tail -n1)"
+    profiles="${profiles// /}"
+    [[ ",$profiles," == *,docs,* ]]
 }
 
 # env_check_tags — tags.env контура есть (его пишет только deploy.sh).

@@ -4,7 +4,7 @@
 # схема всегда соответствует выкатываемому коду.
 #
 # Использование:
-#   infra/env/migrate.sh <prod|test> <auth|wallet|telegram|ai|perf> [образ] [команда migrate...]
+#   infra/env/migrate.sh <prod|test> <auth|wallet|telegram|ai|docs|perf> [образ] [команда migrate...]
 #     образ   — по умолчанию образ сервиса базы из tags.env контура;
 #               для perf не нужен (миграции в infra/db/migrations/perf)
 #     команда — по умолчанию "up"; можно "version", "force N", "down 1"
@@ -25,7 +25,7 @@ env_init "${1:-}"
 base="${2:-}"
 shift 2 || true
 [[ -n "${WALLET_DB_SERVICE[$base]:-}" || "$base" == "perf" ]] \
-    || die "база должна быть auth, wallet, telegram, ai или perf, а не '${base}'"
+    || die "база должна быть auth, wallet, telegram, ai, docs или perf, а не '${base}'"
 
 image="${1:--}"
 shift || true

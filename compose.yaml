@@ -22,6 +22,8 @@
 #     суперпользователь), единственная умеет DDL; ею накатываются миграции
 #     (infra/env/migrate.sh);
 #   - AUTH_/WALLET_/TELEGRAM_/AI_POSTGRES_* — роль и база на сервис, только DML;
+#   - DOCS_POSTGRES_* — то же для необязательного wallet-docs: роль и база
+#     заводятся, только если заданы в db.env (с расширением vector);
 #   - MONITORING_POSTGRES_* — pg_monitor для postgres-exporter;
 #   - PERF_POSTGRES_* — база истории нагрузочных прогонов;
 #   - DUMPER_POSTGRES_* — pg_read_all_data, только дампы (бэкап prod,
@@ -53,7 +55,11 @@ x-service: &service
 services:
   db:
     <<: *service
-    image: docker.io/library/postgres:16-alpine
+    # pgvector/pgvector:pg16 — тот же Postgres 16 (Debian) с расширением vector
+    # для wallet-docs (change wallet-docs-assistant, design D1). Смена с
+    # прежнего alpine-образа пересоздаёт том: musl и glibc сортируют строки
+    # по-разному, индексы старого тома недостоверны (design D2).
+    image: docker.io/pgvector/pgvector:pg16
     mem_limit: 384m
     # shared_preload_libraries — грузит pg_stat_statements в разделяемую
     # память кластера при старте postgres (CREATE EXTENSION в init-db.sh без
@@ -92,6 +98,11 @@ services:
       AI_POSTGRES_DB: ${AI_POSTGRES_DB:?}
       DUMPER_POSTGRES_USER: ${DUMPER_POSTGRES_USER:?}
       DUMPER_POSTGRES_PASSWORD: ${DUMPER_POSTGRES_PASSWORD:?}
+      # Необязательные (design D3): пусто — init-db.sh базу docs не заводит.
+      # ${VAR-}, а не ${VAR:?}: иначе интерполяция упала бы на контуре без docs.
+      DOCS_POSTGRES_USER: ${DOCS_POSTGRES_USER-}
+      DOCS_POSTGRES_PASSWORD: ${DOCS_POSTGRES_PASSWORD-}
+      DOCS_POSTGRES_DB: ${DOCS_POSTGRES_DB-}
     volumes:
       - db-data:/var/lib/postgresql/data
       - ./infra/db/init-db.sh:/docker-entrypoint-initdb.d/init-db.sh:ro
@@ -330,6 +341,46 @@ services:
       wallet:
         aliases: ["wallet-mcp-${WALLET_ENV}"]
 
+  # Справка по OpenSpec-спекам (репозиторий wallet-docs) — НЕОБЯЗАТЕЛЬНЫЙ
+  # модуль (change wallet-docs-assistant): только в профиле docs, который
+  # включается строкой COMPOSE_PROFILES=docs в infra/env/<env>.env. Без
+  # профиля сервиса нет ни в ps, ни в выкате, а гейтвей отвечает 404 на
+  # /api/docs/* (WALLET_DOCS_URL пуст). Своя база docs с pgvector; индекс не
+  # бэкапится — его заливает Jenkins (infra/env/docs-index.sh, change
+  # docs-index-upload). LLM и эмбеддинги — LM Studio на хосте; LLM_*,
+  # EMBED_MODEL и INDEX_TOKEN — в wallet-docs.env (нет файла — вопросы 503,
+  # заливка 503, статус работает). Никто не зависит от него в depends_on.
+  # mem_limit 128m — стартовое значение (design D8).
+  wallet-docs:
+    <<: *service
+    image: ghcr.io/wallettransactions/wallet-docs:${WALLET_DOCS_TAG:-unset}
+    profiles: [docs]
+    mem_limit: 128m
+    env_file:
+      - path: ${WALLET_SECRETS_DIR}/wallet-docs.env
+        required: false
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8089
+      AUTH_SERVICE_URL: http://google-auth:8080
+      DATABASE_URL: postgresql://${DOCS_POSTGRES_USER-}:${DOCS_POSTGRES_PASSWORD-}@db:5432/${DOCS_POSTGRES_DB-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      google-auth:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8089/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      wallet:
+        aliases: ["wallet-docs-${WALLET_ENV}"]
+
   # Единственная точка входа контура на хосте: prod :8090, test :8091.
   wallet-gateway:
     <<: *service
@@ -349,6 +400,11 @@ services:
       # Гейтвей без маршрута /api/mcp/ лишнюю переменную игнорирует.
       WALLET_MCP_URL: http://wallet-mcp:8088
       WALLET_WEB_URL: http://wallet-web:80
+      # /api/docs/* — необязательный модуль wallet-docs, без depends_on (как
+      # wallet-mcp). Значение задаётся в infra/env/<env>.env ТОЛЬКО вместе с
+      # COMPOSE_PROFILES=docs (design D3, D4): без профиля адрес пуст и гейтвей
+      # отвечает 404 «docs не подключён», а не 502 на несуществующее имя.
+      WALLET_DOCS_URL: ${WALLET_DOCS_URL-}
       # Не маршрут: только опрос /version бота для сводки GET /api/versions
       # (wallet-gateway openspec/changes/service-versions). Без depends_on —
       # не ответил бот, в сводке у него "error", гейтвей это не задерживает.
