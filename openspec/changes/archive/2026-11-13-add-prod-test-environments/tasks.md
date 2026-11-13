@@ -139,7 +139,7 @@
 
 ## 9. Сквозная проверка
 
-- [ ] 9.1 (2026-11-13: шаги 1–2 пройдены на wallet-report — `0.3.0-rc.1` в test, `v0.3.0` → prod `env-deploy #96` через ~2 мин после тега, digest `sha256:e475b74…` тот же, `/version` prod: `version 0.3.0`, `build 0.3.0-rc.1`; осталось — шаг 3, ручной откат prod через `env-rollback`) Полный цикл на одном сервисе (например, wallet-report): — Тест: [wallet-infra#4](https://github.com/WalletTransactions/wallet-infra/issues/4)
+- [x] 9.1 (2026-11-13, wallet-report: `0.3.0-rc.1` в test, smoke зелёный; `v0.3.0` → prod `env-deploy #96` через ~2 мин после тега, digest `sha256:e475b74…` тот же, `/version` prod — `version 0.3.0`, `build 0.3.0-rc.1`; ручной откат `env-rollback #3` → 0.2.0 (digest `0fe7c0e…`), healthy; затем `release-watch` сам вернул 0.3.0 — `env-deploy #100`, тот же digest) Полный цикл на одном сервисе (например, wallet-report): — Тест: [wallet-infra#4](https://github.com/WalletTransactions/wallet-infra/issues/4)
   1. правка, затем тег `vX.Y.Z-rc.1` — через ≤10 минут работает в test, smoke зелёный;
   2. тег `vX.Y.Z` — через ≤10 минут работает в prod с тем же digest;
   3. ручной откат prod на предыдущую версию.
