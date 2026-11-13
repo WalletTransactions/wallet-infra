@@ -350,12 +350,14 @@ services:
   # docs-index-upload). LLM и эмбеддинги — LM Studio на хосте; LLM_*,
   # EMBED_MODEL и INDEX_TOKEN — в wallet-docs.env (нет файла — вопросы 503,
   # заливка 503, статус работает). Никто не зависит от него в depends_on.
-  # mem_limit 128m — стартовое значение (design D8).
+  # mem_limit 384m: стартовые 128m (design D8) не хватило — заливка индекса
+  # wallet-web (~1 МБ markdown) иногда упиралась в OOM-kill (anon-rss 126 МБ),
+  # сервис перезапускался посреди PUT /docs/index/<репозиторий> (замер 2026-11-13).
   wallet-docs:
     <<: *service
     image: ghcr.io/wallettransactions/wallet-docs:${WALLET_DOCS_TAG:-unset}
     profiles: [docs]
-    mem_limit: 128m
+    mem_limit: 384m
     env_file:
       - path: ${WALLET_SECRETS_DIR}/wallet-docs.env
         required: false
