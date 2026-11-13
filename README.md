@@ -102,5 +102,7 @@ bash infra/monitoring/up.sh                             # Grafana: http://localh
 ```
 
 Дашборд Grafana "Wallet Transactions — Overview" заводится сам при первом
-старте (admin/admin, смените пароль при первом входе).
+старте. Логин `admin`, пароль — в `~/.config/wallet-secrets/monitoring.env`
+(`GRAFANA_ADMIN_PASSWORD`; нет файла — `up.sh` создаст его со случайным
+паролем). Поменять пароль — правка этого файла и повторный `up.sh`.
 
