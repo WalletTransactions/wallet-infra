@@ -322,9 +322,9 @@ infra/env/docs-index.sh test all --strict       # любой отказ — не
 
 Выключение — убрать обе строки из `<env>.env` и выкатить тег wallet-infra;
 если контейнер остался — `docker rm -f wallet-<env>-wallet-docs-1`. Секреты
-`DOCS_*` можно не трогать: без профиля они ничего не включают. Откат pgvector
-— образ `postgres:16-alpine`, пересоздание тома и восстановление дампов
-`pre-pgvector`.
+`DOCS_*` можно не трогать: без профиля они ничего не включают. Возврата на
+`postgres:16-alpine` не предусмотрено: образ `db` — `pgvector/pgvector:pg16` во
+всех контурах, а выключается только сервис `wallet-docs`.
 
 Состояние контура (`~/.local/state/wallet-envs/<env>/`):
 
