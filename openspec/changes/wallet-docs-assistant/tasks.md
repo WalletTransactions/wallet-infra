@@ -19,7 +19,7 @@
 ## 4. Скрипты контура (D6, D8)
 
 - [x] 4.1 В `infra/env/lib.sh` добавить `wallet-docs` в `WALLET_SERVICE_PORT` (8089) и базу `docs` в `WALLET_DB_SERVICE`. В `migrate.sh` принять базу `docs` и сообщение об ошибке с её именем. Проверка: `bash infra/env/migrate.sh test docs` на контуре без `DOCS_*` завершается понятной ошибкой «не задан DOCS_POSTGRES_DB».
-- [ ] 4.2 В `up.sh` накатывать миграции docs, только если профиль `docs` включён, заданы `DOCS_POSTGRES_DB` и тег `WALLET_DOCS_TAG`; иначе писать в вывод, что docs пропущен. `backup.sh` и `test-refresh.sh` оставить на четырёх базах. Проверка: `up.sh test` на контуре без профиля завершается без упоминания ошибок и без контейнера `wallet-docs`.
+- [x] 4.2 В `up.sh` накатывать миграции docs, только если профиль `docs` включён, заданы `DOCS_POSTGRES_DB` и тег `WALLET_DOCS_TAG`; иначе писать в вывод, что docs пропущен. `backup.sh` и `test-refresh.sh` оставить на четырёх базах. Проверка: `up.sh test` на контуре без профиля завершается без упоминания ошибок и без контейнера `wallet-docs`.
 - [x] 4.3 В `deploy.sh` отказывать в выкате `wallet-docs`, если профиль выключен, с сообщением и без изменений контура. Проверка: `deploy.sh test wallet-docs <тег>` на контуре без профиля завершается ошибкой, `git status` и `tags.env` не изменились.
 
 ## 5. Документация
@@ -28,9 +28,9 @@
 
 ## 6. Выкат на стенд
 
-- [ ] 6.1 test: `backup.sh test --label pre-pgvector`, затем `down`, удаление тома `db-data`, `up.sh test`, `test-refresh.sh`. Проверка: четыре сервиса здоровы, `curl` через гейтвей `:8091/api/versions` (админ-токеном) возвращает версии без ошибок, в `pg_stat_statements` есть записи.
-- [ ] 6.2 test: добавить `DOCS_POSTGRES_*` в `~/.config/wallet-secrets/test/db.env` (права 600, без вывода значений), прогнать `migrate.sh test docs` до появления образа `wallet-docs`: достаточно, чтобы база и расширение создались (`psql -c '\dx'` в базе docs). Проверка: `vector` есть, `wallet-docs` не запущен, `curl :8091/healthz` отвечает 200.
-- [ ] 6.3 prod: окно простоя согласовать заранее; `backup.sh prod --label pre-pgvector`, проверка дампов `pg_restore -l`, замена образа и тома, `up.sh prod`, восстановление дампов. Проверка: сервисы prod здоровы, число пользователей и операций в сводке совпадает с записанным до замены.
+- [x] 6.1 test: `backup.sh test --label pre-pgvector`, затем `down`, удаление тома `db-data`, `up.sh test`, `test-refresh.sh`. Проверка: четыре сервиса здоровы, `curl` через гейтвей `:8091/api/versions` (админ-токеном) возвращает версии без ошибок, в `pg_stat_statements` есть записи.
+- [x] 6.2 test: добавить `DOCS_POSTGRES_*` в `~/.config/wallet-secrets/test/db.env` (права 600, без вывода значений), прогнать `migrate.sh test docs` до появления образа `wallet-docs`: достаточно, чтобы база и расширение создались (`psql -c '\dx'` в базе docs). Проверка: `vector` есть, `wallet-docs` не запущен, `curl :8091/healthz` отвечает 200.
+- [x] 6.3 prod: окно простоя согласовать заранее; `backup.sh prod --label pre-pgvector`, проверка дампов `pg_restore -l`, замена образа и тома, `up.sh prod`, восстановление дампов. Проверка: сервисы prod здоровы, число пользователей и операций в сводке совпадает с записанным до замены.
 - [ ] 6.4 Откат отрепетировать на test: вернуть образ `postgres:16-alpine`, пересоздать том и восстановить `pre-pgvector`. Проверка: контур test здоров на старом образе, после чего образ pgvector возвращается.
 
 ## Заметки к выкату
@@ -41,7 +41,11 @@
 - 3.2: одноразовый `pgvector/pgvector:pg16`: без `DOCS_*` — строка «пропущена», базы и роли нет; с ними — база, `vector 0.8.7`, `pg_stat_statements`; повтор — код 0, ACL базы прежний. Роль docs: DML — да, `CREATE TABLE` — `permission denied for schema public`, `TRUNCATE` — отказ, подключение к чужой базе — отказ; `dumper` к базе docs — отказ.
 - 4.1, 4.3 на живом test: `migrate.sh test docs` — «не задан DOCS_POSTGRES_DB»; `deploy.sh test wallet-docs 0.1.0` — «профиль docs … выключен»; `backup.sh test docs` — «индекс docs не бэкапится»; `tags.env` и контейнеры не изменились.
 - Сверх design: (а) `deploy.sh` в prod не снимает дамп базы docs перед миграцией — иначе выкат падал бы (у `dumper` нет `CONNECT`); (б) `up.sh` при включённом профиле без `DOCS_POSTGRES_DB` или тега выключает профиль на этот запуск (`COMPOSE_PROFILES=` процесса сильнее `--env-file`, проверено), иначе compose тянул бы `wallet-docs:unset`.
-- 4.2 и 5.1 проверяются живым `up.sh` и командами README при выкате тега wallet-infra (6.1, 6.2): до него скрипты контура берут `compose.yaml` из выкатанного checkout'а, и проверка на нём была бы неполной.
+- 6.1 (2026-11-13, 08:05–08:08, 3 минуты): по решению владельца **без** `backup.sh test` (данные test берутся из prod). Под одной блокировкой test: `down` → `docker volume rm wallet-test_db-data` → push тега `v0.4.0-rc.1` → `deploy.sh test wallet-infra 0.4.0-rc.1` (свежий том на `pgvector/pgvector:pg16`, миграции всех баз, smoke гейтвея) → `test-refresh.sh` (четыре базы из prod, миграции test поверх, FLUSHALL Redis). Все 10 сервисов healthy, `pg_stat_statements` — 1922 записи, `vector 0.8.7` доступен, `wallet` на версии 36. Проверка `/api/versions` админ-токеном не делалась (сессии test сброшены перезаливкой).
+- 4.2 на живом test (тег `v0.4.0-rc.1`): `up.sh test` без профиля — «docs пропущен: профиль docs выключен», контейнера `wallet-docs` нет.
+- 6.2: `DOCS_POSTGRES_*` в test `db.env` (600) добавил владелец; `up.sh test` пересоздал `db` с новыми переменными, `migrate.sh test docs` создал базу `wallet_docs` с `vector 0.8.7` и `pg_stat_statements` (CONNECT — мигратор, роль docs, monitoring) и завершился ожидаемой ошибкой «нет тега wallet-docs». `wallet-docs` не запущен, гейтвей 200. Шаблон `infra/db/.env.example` с `DOCS_POSTGRES_*` — PR #20.
+- 6.3 (2026-11-13): по решению владельца **без** бэкапа и восстановления — в prod практически не было данных, база начата с нуля. Финальный тег `v0.4.0` на коммит `bc9a6d26`, проверенный в test (`v0.4.0-rc.1`). Первая попытка (08:24) упала на первой миграции: в `MIGRATOR_POSTGRES_PASSWORD` prod попала кириллическая буква, URL мигратора не разбирается (`net/url: invalid userinfo`); автооткат на `v0.2.0` упал на том же секрете — prod лежал ~9 минут. Пароль заменён (ASCII), том пересоздан ещё раз, `deploy.sh prod wallet-infra 0.4.0` (08:33) — ok: 10 сервисов healthy, `:8090/healthz` 200, Postgres 16.15 (Debian), `vector.control` в образе. Пароль мигратора prod сменён (старый засветился в выводе ошибки).
+- 5.1: команды README про профиль проверены в 4.1–4.3 и 6.1–6.2; включение профиля и выкат сервиса — после первого образа wallet-docs.
 - Для полного подключения сервиса по чек-листу «Новый сервис в контуре» ещё нужны цель в `infra/monitoring/prometheus.yml`, имя в whitelist `infra/logging/fluent-bit.conf` и `wallet-docs` в `SERVICE` job'ов `env-deploy`/`env-rollback` — в задачах этого change их нет, делаются вместе с первым образом сервиса.
 
 ## Workflow follow-up
