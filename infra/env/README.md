@@ -50,6 +50,7 @@ Postgres — только на `127.0.0.1`, из LAN не виден (`../db/REA
 | `backup.sh <env> [--label <метка>] [<база>...]` | Дамп баз ролью `dumper` в `${WALLET_BACKUP_DIR}`, с ротацией — см. «Дампы» |
 | `release-watch.sh` | Что пора выкатить: новые теги в ghcr и git-теги wallet-infra против контуров; печатает `<env> <сервис> <тег>`, сам не выкатывает — см. «Выкат и откат» |
 | `test-refresh.sh` | Перезаливка данных test из prod с вычисткой — см. «Данные test» |
+| `docs-index.sh <env> <репозиторий\|all> [--strict]` | Заливка OpenSpec-спек в индекс wallet-docs — см. «Необязательный модуль wallet-docs» |
 | `loadtest_env.sh` | Контур нагрузочных прогонов (только test): подключают скрипты `wallet-api/loadtest` и `wallet-report/loadtest` — см. «Нагрузочные прогоны» |
 | `lib.sh` | Общие функции, подключается через `source` |
 
@@ -285,7 +286,34 @@ WALLET_DOCS_URL=http://wallet-docs:8089
    руками (как у нового сервиса выше), `wallet-docs.env` (600: `INDEX_TOKEN`,
    `LLM_URL`, `LLM_MODEL`, `EMBED_MODEL`; нет файла — вопросы и заливка
    отвечают 503), две строки в `<env>.env`, тег wallet-infra и его выкат.
-4. Заливка индекса — `docs-index.sh` (change `docs-index-upload`).
+4. **Индекс.** `docs-index.sh <env> all` (ниже), затем ночью — job Jenkins
+   `docs-index`.
+
+#### Заливка индекса — `docs-index.sh`
+
+```sh
+infra/env/docs-index.sh test wallet-gateway     # один репозиторий
+infra/env/docs-index.sh test all                # все каталоги с openspec/ рядом с wallet-infra
+infra/env/docs-index.sh test all --strict       # любой отказ — ненулевой код
+```
+
+- Источник — рабочая папка организации (`WALLET_TRANSACTIONS_PATH`, иначе
+  каталог над wallet-infra), не git-клон: только `openspec/**/*.md`, обычные
+  файлы без симлинков. В индекс попадают и незакоммиченные черновики — их
+  видит только админ (вид `change`), пользователям доступны `specs/`.
+- JSON собирает `jq` (в контейнере Jenkins нет `python3`), запрос
+  `PUT /docs/index/<репозиторий>` уходит изнутри контейнера `wallet-docs`
+  (`docker exec`): `INDEX_TOKEN` остаётся в его окружении (`wallet-docs.env`)
+  и в заголовок попадает через файл — его нет ни в аргументах процессов, ни в
+  выводе. `set -x` в скрипт не добавлять.
+- На репозиторий — одна строка `<репозиторий>: chunks=… embedded=… reused=…
+  skipped=… files=… за N с`. Повторная заливка без изменений —
+  `reused` = `chunks`, `embedded=0`.
+- Мягкий отказ: профиль `docs` выключен, контейнер не запущен, репозитория нет
+  на диске, тело больше 16 МБ или ответ не 2xx — строка `docs-index: <причина>`
+  и код 0 (при `all` — дальше по списку); с `--strict` — код 1. Job
+  `docs-index` по этой строке ставит `UNSTABLE`.
+- Берёт блокировку контура: не идёт параллельно с выкатом и миграцией.
 
 Выключение — убрать обе строки из `<env>.env` и выкатить тег wallet-infra;
 если контейнер остался — `docker rm -f wallet-<env>-wallet-docs-1`. Секреты
