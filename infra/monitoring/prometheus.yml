@@ -17,7 +17,7 @@ scrape_configs:
     static_configs:
       - targets: ["localhost:9090"]
 
-  # HTTP-сервисы проекта — каждый отдаёт RPS/latency-percentiles/errors на
+  # HTTP-сервисы проекта (включая необязательный wallet-docs) — каждый отдаёт RPS/latency-percentiles/errors на
   # /metrics (см. src/util/metrics.hpp в каждом сервисе). job (имя ниже)
   # отличает сервисы друг от друга, метка env — контур (prod/test, design D11
   # в openspec/changes/add-prod-test-environments). Цели — по alias'ам
@@ -69,6 +69,19 @@ scrape_configs:
       - targets: ["wallet-mcp-prod:8088"]
         labels: {env: prod}
       - targets: ["wallet-mcp-test:8088"]
+        labels: {env: test}
+
+  # Справка по OpenSpec-спекам — НЕОБЯЗАТЕЛЬНЫЙ модуль (compose-профиль docs):
+  # на контуре без профиля цель просто down, это штатное состояние, не ошибка.
+  # Вопросы по result (docs_answers_total), отказы «этого нет»
+  # (docs_refusals_total{stage}), отклонённые токены (docs_auth_rejected_total),
+  # заливки индекса (docs_index_total) — строка "wallet-docs" в
+  # wallet-overview.json.
+  - job_name: wallet-docs
+    static_configs:
+      - targets: ["wallet-docs-prod:8089"]
+        labels: {env: prod}
+      - targets: ["wallet-docs-test:8089"]
         labels: {env: test}
 
   # CPU/RAM/сеть ПО КОНТЕЙНЕРАМ (container_cpu_usage_seconds_total,
