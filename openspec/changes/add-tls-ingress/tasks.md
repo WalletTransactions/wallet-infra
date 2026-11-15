@@ -1,0 +1,22 @@
+# Tasks
+
+## 1. TLS-прокси
+
+- [ ] 1.1 Добавить в `compose.yaml` сервис `tls-proxy` (профиль `tls`, образ Caddy 2, `mem_limit: 64m`, том для данных CA, порт `${WALLET_TLS_PORT}:443`, проксирует на `wallet-gateway:8090`) и каталог `infra/tls/` с Caddyfile; проверить в test: `docker compose --profile tls config` собирается, `https://<хост>:8444/healthz` отвечает `200`
+- [ ] 1.2 Режимы сертификата: `internal` (CA Caddy, для IP и для имени хоста) и `files` (`fullchain.pem`, `privkey.pem` из `${WALLET_SECRETS_DIR}/tls/`), ошибка при неверном `WALLET_TLS_MODE` и при отсутствии файлов; проверить `curl --cacert` для обоих режимов и сообщение об ошибке
+- [ ] 1.3 Скрипт `infra/tls/export-ca.sh`, выгружающий публичный `root.crt` из тома; проверить, что в файле нет закрытого ключа (`openssl x509 -in … -noout`, `grep PRIVATE` пусто)
+
+## 2. Согласованные настройки
+
+- [ ] 2.1 `up.sh` выводит из `WALLET_TLS=true` профиль `tls`, `COOKIE_SECURE=true` у google-auth, `TRUST_FORWARDED_HEADERS=true` у гейтвея и привязку порта гейтвея к `127.0.0.1`; без переменной — прежнее поведение; проверить в test оба состояния: в `docker compose config` нужные значения, с другой машины `:8091` закрыт при TLS
+- [ ] 2.2 Пробросить `WALLET_AUTH_METHODS`, `WALLET_REGISTRATION`, `WALLET_ALLOW_INSECURE_AUTH` в google-auth (`AUTH_METHODS`, `REGISTRATION`, `ALLOW_INSECURE_AUTH`) с умолчаниями `google`/`closed`/`false`; проверить `docker compose config` без переменных и с ними, а на живом test после выката google-auth — `curl <гейтвей>/auth/methods`
+
+## 3. Документация и выкат
+
+- [ ] 3.1 Описать профиль, режимы сертификата, выгрузку CA и настройки входа в `infra/env/README.md` и корневом `README.md` (включая шаг «добавить https `redirect_uri` в Google Cloud Console» и установку корня CA на устройства); проверить, что команды из README выполняются как записаны
+- [ ] 3.2 Включить TLS в test, пройти из браузера: вход через Google, cookie с `Secure`, `curl http://<хост>:8091` с другой машины не отвечает; затем prod по порядку из `design.md`
+
+## Workflow follow-up
+
+- Выкатывается после `trusted-forwarded-headers` (wallet-gateway) и до включения паролей (`add-password-auth`).
+- Архивировать change после выкатки и проверки на test-контуре.
