@@ -1,0 +1,48 @@
+## Why
+
+Вход по паролю (google-auth, change `add-password-auth`) пересылает пароль
+пользователя через сеть. В стеке нет TLS: браузер и Android ходят на гейтвей по
+`http://…:8090`, cookie выставляются без `Secure`. Для паролей нужен
+необязательный TLS на входе контура. Стенд остаётся рабочим и без него: владелец
+может сознательно остаться на HTTP, но тогда пароль принимается только с явным
+`ALLOW_INSECURE_AUTH=true`.
+
+## What Changes
+
+- Необязательный compose-профиль `tls`: прокси Caddy перед гейтвеем контура,
+  публикует HTTPS-порт (`WALLET_TLS_PORT`: prod 8443, test 8444).
+- Два режима сертификата (`WALLET_TLS_MODE`): `internal` — собственный CA Caddy
+  (по умолчанию), `files` — готовые сертификат и ключ из каталога секретов контура
+  (например, от Let's Encrypt для домена).
+- Скрипт выгрузки корневого сертификата CA для установки на устройства.
+- При включённом профиле `tls` compose сам включает `COOKIE_SECURE=true` у
+  google-auth и `TRUST_FORWARDED_HEADERS=true` у гейтвея, а порт гейтвея
+  публикует только на `127.0.0.1`; без профиля всё как раньше.
+- Настройки способов входа контура (`AUTH_METHODS`, `REGISTRATION`,
+  `ALLOW_INSECURE_AUTH`) задаются в `infra/env/<env>.env` и пробрасываются в
+  google-auth.
+
+## Capabilities
+
+### New Capabilities
+- `tls-ingress`: необязательный TLS на входе контура: профиль, порты, режимы
+  сертификата, выгрузка корня CA, согласованные настройки cookie и доверия к
+  `X-Forwarded-*`.
+
+### Modified Capabilities
+- `deployment-environments`: «Адреса контуров» допускает TLS-прокси как
+  опубликованный сервис; добавляется требование о настройках способов входа.
+
+## Impact
+
+- **wallet-infra**: `compose.yaml` (сервис `tls-proxy`, переменные google-auth и
+  гейтвея), `infra/tls/` (Caddyfile, скрипт выгрузки CA), `infra/env/*.env`,
+  `infra/env/README.md`, корневой `README.md`.
+- **wallet-gateway** (`trusted-forwarded-headers`): должен быть выкачен раньше.
+- **google-auth** (`add-password-auth`): переменные `AUTH_METHODS`, `REGISTRATION`,
+  `ALLOW_INSECURE_AUTH`, `COOKIE_SECURE`.
+- **android-wallet** (`add-password-login`): доверие к пользовательскому CA.
+- **Google Cloud Console**: для входа через Google за TLS нужно добавить https
+  `redirect_uri` контура (вручную).
+- **RAM/диск**: Caddy ~20–40 МБ на контур (лимит 64 МБ), образ ~40 МБ; GPU не затрагивается.
+- k8s (`infra/k8s`) не затрагивается.
