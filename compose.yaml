@@ -278,6 +278,12 @@ services:
       DATABASE_URL: postgresql://${AI_POSTGRES_USER}:${AI_POSTGRES_PASSWORD}@db:5432/${AI_POSTGRES_DB}
       LLM_URL: ${LLM_URL-}
       LLM_MODEL: ${LLM_MODEL-}
+      # Поток событий хода chat (wallet-ai chat-sse-events, GET
+      # /api/ai/jobs/{id}/events). Значение — из infra/env/<env>.env; по
+      # умолчанию выключен. Включать, когда гейтвей уже умеет проксировать
+      # text/event-stream (wallet-gateway proxy-sse-stream). Переменная в
+      # environment сильнее wallet-ai.env: значение в секретах не действует.
+      AI_STREAM_ENABLED: ${AI_STREAM_ENABLED-false}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
