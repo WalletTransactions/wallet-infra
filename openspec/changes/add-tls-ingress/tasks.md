@@ -16,6 +16,8 @@
 - [ ] 3.1 Описать профиль, режимы сертификата, выгрузку CA и настройки входа в `infra/env/README.md` и корневом `README.md` (включая шаг «добавить https `redirect_uri` в Google Cloud Console» и установку корня CA на устройства); проверить, что команды из README выполняются как записаны
 - [ ] 3.2 Включить TLS в test, пройти из браузера: вход через Google, cookie с `Secure`, `curl http://<хост>:8091` с другой машины не отвечает; затем prod по порядку из `design.md`
 
+- [ ] 3.3 Проверить `https://` с Android (перенесено из android-wallet `add-password-login`, задача 1.2): на Huawei P20 Pro установить корень CA контура (из `export-ca.sh`) как пользовательский сертификат, указать `https://`-адрес в «Адрес сервера» и выполнить вход и синхронизацию; без установленного корня запрос завершается ошибкой сертификата. Приложение уже доверяет пользовательским CA (`network_security_config`, android-wallet 1.0.165+)
+
 ## Workflow follow-up
 
 - Выкатывается после `trusted-forwarded-headers` (wallet-gateway) и до включения паролей (`add-password-auth`).
