@@ -55,5 +55,13 @@ fi
 echo "==> [$ENV_NAME] сервисы"
 env_compose up -d --wait --wait-timeout 300 --remove-orphans
 
+# TLS выключили (откат add-tls-ingress) — прокси убрать явно: сервис с
+# невключённым профилем compose сиротой не считает, и --remove-orphans его не
+# трогает. Явно названный сервис compose берёт и без профиля.
+if ! env_tls_enabled && [[ -n "$(env_compose ps -aq tls-proxy 2>/dev/null)" ]]; then
+    echo "==> [$ENV_NAME] TLS выключен — убираю tls-proxy"
+    env_compose rm -sf tls-proxy
+fi
+
 echo "==> [$ENV_NAME] готово:"
 env_compose ps --format 'table {{.Service}}\t{{.Image}}\t{{.Status}}'

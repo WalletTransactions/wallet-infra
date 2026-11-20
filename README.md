@@ -86,7 +86,12 @@ docker по одному [`compose.yaml`](compose.yaml):
 `infra/env/up.sh <prod|test>`. Первый запуск, секреты, миграции, откат и
 перезаливка test — [infra/env/README.md](infra/env/README.md).
 
-Снаружи открыт только гейтвей контура; Postgres — только на `127.0.0.1` этой машины
+HTTPS — необязательный TLS-прокси контура (prod `:8443`, test `:8444`):
+`WALLET_TLS=true` в `infra/env/<env>.env`, режимы сертификата `internal`,
+`files` и `tailscale` — см. [infra/env/README.md](infra/env/README.md),
+«Необязательный TLS на входе». Тогда гейтвей публикуется только на `127.0.0.1`.
+
+Снаружи открыт только гейтвей контура (или его TLS-прокси); Postgres — только на `127.0.0.1` этой машины
 (prod `:15555`, test `:15432`); redis — `docker exec`
 (см. [infra/db/README.md](infra/db/README.md), «Подключение к базе контура»).
 
