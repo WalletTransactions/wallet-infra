@@ -6,5 +6,5 @@
 
 ## 2. Выкат на test
 
-- [ ] 2.1 Тег wallet-infra и `up.sh test`; в контейнере wallet-ai `AI_STREAM_ENABLED=true`
-- [ ] 2.2 Убрать `AI_STREAM_ENABLED=true` из `~/.config/wallet-secrets/test/wallet-ai.env` (перекрывается compose); поток на test по-прежнему работает
+- [x] 2.1 Тег v0.4.1-rc.3 (rc.2 упал: незакоммиченные правки docs в выкатанной копии, см. test.env, PR #37); в контейнере wallet-ai `AI_STREAM_ENABLED=true`
+- [x] 2.2 Убрать `AI_STREAM_ENABLED=true` из `~/.config/wallet-secrets/test/wallet-ai.env` (перекрывается compose); поток на test по-прежнему работает
