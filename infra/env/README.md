@@ -106,8 +106,13 @@ openssl genrsa -out "$S/jwt_signing_key.pem" 2048 && chmod 644 "$S/jwt_signing_k
 - `wallet-telegram.env` — токен и имя бота контура (в test — отдельный бот
   из BotFather, НЕ @WalletTransaction_bot: два процесса на одном токене
   получают 409), тот же `TELEGRAM_SERVICE_SECRET`, что в `google-auth.env`.
-- `wallet-ai.env` — `LLM_API_KEY`, если нужен; `LLM_URL`/`LLM_MODEL` задаёт
-  `infra/env/<env>.env`.
+- `wallet-ai.env` — `LLM_API_KEY`, если нужен; `LLM_URL`/`LLM_MODEL` и
+  `AI_STREAM_ENABLED` (поток событий chat, по умолчанию выключен) задаёт
+  `infra/env/<env>.env`. `AI_STREAM_ENABLED` в самом `wallet-ai.env` не
+  действует: `environment` в compose сильнее `env_file`. Остальные параметры
+  потока (`AI_STREAM_MAX`, `AI_STREAM_MAX_PER_USER`, `AI_STREAM_PING_SECS`,
+  у гейтвея `GATEWAY_STREAMS_MAX`) имеют рабочие умолчания и в compose не
+  выведены.
 
 Адреса других сервисов, `DATABASE_URL`, `HOST`/`PORT` из `.env.example`
 можно не трогать: `compose.yaml` переопределяет их адресами сети контура.
