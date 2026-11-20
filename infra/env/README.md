@@ -102,7 +102,32 @@ openssl genrsa -out "$S/jwt_signing_key.pem" 2048 && chmod 644 "$S/jwt_signing_k
   Google Cloud Console), `ADMIN_EMAILS`, `TELEGRAM_SERVICE_SECRET`,
   `TELEGRAM_BOT_USERNAME` (имя бота контура без `@`, как в
   `wallet-telegram.env`; без него «Подключить Telegram» в вебе получает 503),
-  `JWT_RSA_PRIVATE_KEY_PATH=/app/jwt_signing_key.pem`.
+  `JWT_RSA_PRIVATE_KEY_PATH=/app/jwt_signing_key.pem`. Вход по паролю
+  (необязателен, change `add-password-auth`) настраивается там же, полный список — в
+  `google-auth/.env.example`:
+
+  ```bash
+  # какие способы входа включены: password | google | both (по умолчанию both)
+  AUTH_METHODS=both
+  # самостоятельная регистрация: open | closed (по умолчанию open; на prod — closed)
+  REGISTRATION=closed
+  # принимать пароль и по HTTP: только пока в контуре нет TLS (по умолчанию выключено)
+  ALLOW_INSECURE_AUTH=true
+  # лимиты попыток входа (по умолчанию 5 на email и 30 на IP за 900 с)
+  # AUTH_FAIL_MAX_PER_EMAIL=5
+  # AUTH_FAIL_MAX_PER_IP=30
+  # AUTH_FAIL_WINDOW_SECS=900
+  ```
+
+  Без `ALLOW_INSECURE_AUTH` пароль принимается только с `X-Forwarded-Proto: https`
+  (его ставит `wallet-gateway`, а `https` туда придёт от TLS-прокси — change
+  `add-tls-ingress`); без TLS вход по паролю вернёт `403 insecure_transport`. Пустой
+  `AUTH_METHODS=google` отключает ручки пароля без отката кода. После правки файла
+  нужно пересоздать контейнер: `bash infra/env/up.sh <env>`.
+- `wallet-gateway.env` — `TRUST_FORWARDED_HEADERS` (`true`/`false`, по умолчанию
+  `false`, см. `wallet-gateway/.env.example`): верить ли `X-Forwarded-Proto` и
+  `X-Forwarded-For` от прокси перед гейтвеем. Включать только вместе с TLS-прокси и без
+  публикации порта гейтвея в обход него.
 - `wallet-telegram.env` — токен и имя бота контура (в test — отдельный бот
   из BotFather, НЕ @WalletTransaction_bot: два процесса на одном токене
   получают 409), тот же `TELEGRAM_SERVICE_SECRET`, что в `google-auth.env`.
