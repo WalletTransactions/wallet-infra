@@ -12,6 +12,10 @@
 
 WALLET_INFRA_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
+# TLS на входе контура: env_tls_prepare, env_compose_profiles, env_setting.
+# shellcheck source=infra/env/tls.sh
+source "$(dirname "${BASH_SOURCE[0]}")/tls.sh"
+
 # Базы контура и сервис, в образе которого лежат их миграции (design D4).
 # perf — база истории нагрузочных прогонов, миграции в этом репозитории.
 # shellcheck disable=SC2034  # используют скрипты, подключающие lib.sh
@@ -153,8 +157,11 @@ env_lock() {
 
 # env_compose <аргументы compose...> — docker compose контура со всеми
 # тремя источниками переменных (design D2). Порядок важен: позже — сильнее.
+# TLS-производные (профиль tls, привязка порта гейтвея, generated/*.env,
+# Caddyfile) выводятся здесь, на каждый вызов, — см. tls.sh.
 env_compose() {
-    docker compose \
+    env_tls_prepare
+    COMPOSE_PROFILES="$(env_compose_profiles)" docker compose \
         --project-directory "$COMPOSE_DIR" \
         -f "$COMPOSE_DIR/compose.yaml" \
         --env-file "$COMPOSE_DIR/infra/env/$ENV_NAME.env" \

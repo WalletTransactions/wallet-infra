@@ -28,17 +28,21 @@
 ## ADDED Requirements
 
 ### Requirement: Настройки способов входа контура
-Контур SHALL задавать способы входа переменными `infra/env/<env>.env`:
-`WALLET_AUTH_METHODS` (`password`, `google`, `both`; по умолчанию `google`),
-`WALLET_REGISTRATION` (`open`, `closed`; по умолчанию `closed`) и
-`WALLET_ALLOW_INSECURE_AUTH` (`true`, `false`; по умолчанию `false`);
-compose SHALL пробрасывать их в google-auth как `AUTH_METHODS`, `REGISTRATION`,
-`ALLOW_INSECURE_AUTH`. Значения по умолчанию сохраняют прежнее поведение
-(только Google).
+Контур MAY задавать способы входа переменными `infra/env/<env>.env`:
+`WALLET_AUTH_METHODS` (`password`, `google`, `both`), `WALLET_REGISTRATION`
+(`open`, `closed`) и `WALLET_ALLOW_INSECURE_AUTH` (`true`, `false`). Заданную
+переменную compose SHALL передавать в google-auth как `AUTH_METHODS`,
+`REGISTRATION`, `ALLOW_INSECURE_AUTH` поверх `google-auth.env`; незаданная
+SHALL NOT менять значение из него. Недопустимое значение SHALL останавливать
+запуск.
 
 #### Scenario: Ничего не задано
-- **WHEN** в `<env>.env` нет этих переменных
-- **THEN** google-auth запускается с `AUTH_METHODS=google`, `REGISTRATION=closed`, `ALLOW_INSECURE_AUTH=false`
+- **WHEN** в `<env>.env` нет этих переменных, а в `google-auth.env` задано `ALLOW_INSECURE_AUTH=true`
+- **THEN** google-auth запускается с `ALLOW_INSECURE_AUTH=true`, как до этого change
+
+#### Scenario: Недопустимое значение
+- **WHEN** в `<env>.env` задано `WALLET_AUTH_METHODS=sms`
+- **THEN** запуск контура завершается ошибкой со списком допустимых значений
 
 #### Scenario: Пароль включён в test
 - **WHEN** в `test.env` заданы `WALLET_AUTH_METHODS=both` и `WALLET_REGISTRATION=open`

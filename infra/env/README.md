@@ -53,7 +53,9 @@ Postgres — только на `127.0.0.1`, из LAN не виден (`../db/REA
 | `test-refresh.sh` | Перезаливка данных test из prod с вычисткой — см. «Данные test» |
 | `docs-index.sh <env> <репозиторий\|all> [--strict]` | Заливка OpenSpec-спек в индекс wallet-docs — см. «Необязательный модуль wallet-docs» |
 | `loadtest_env.sh` | Контур нагрузочных прогонов (только test): подключают скрипты `wallet-api/loadtest` и `wallet-report/loadtest` — см. «Нагрузочные прогоны» |
+| `export-ca.sh <env> [файл]` | Публичный корень CA TLS-прокси контура для установки на устройства — см. «Необязательный TLS на входе» |
 | `lib.sh` | Общие функции, подключается через `source` |
+| `tls.sh` | TLS-производные для compose (профиль, порт гейтвея, `generated/`), подключается из `lib.sh` |
 
 `compose.yaml` контура скрипты берут из выкатанного тега wallet-infra —
 checkout'а `~/.local/state/wallet-envs/<env>/infra` (его ведёт
@@ -124,10 +126,10 @@ openssl genrsa -out "$S/jwt_signing_key.pem" 2048 && chmod 644 "$S/jwt_signing_k
   `add-tls-ingress`); без TLS вход по паролю вернёт `403 insecure_transport`. Пустой
   `AUTH_METHODS=google` отключает ручки пароля без отката кода. После правки файла
   нужно пересоздать контейнер: `bash infra/env/up.sh <env>`.
-- `wallet-gateway.env` — `TRUST_FORWARDED_HEADERS` (`true`/`false`, по умолчанию
-  `false`, см. `wallet-gateway/.env.example`): верить ли `X-Forwarded-Proto` и
-  `X-Forwarded-For` от прокси перед гейтвеем. Включать только вместе с TLS-прокси и без
-  публикации порта гейтвея в обход него.
+- `wallet-gateway.env` — `TRUST_FORWARDED_HEADERS` здесь задавать не нужно:
+  compose выставляет его из `WALLET_TLS` (`true` только вместе с TLS-прокси и
+  закрытым портом гейтвея), а строка в секрете перекрывается. То же для
+  `COOKIE_SECURE` в `google-auth.env`. См. «Необязательный TLS на входе».
 - `wallet-telegram.env` — токен и имя бота контура (в test — отдельный бот
   из BotFather, НЕ @WalletTransaction_bot: два процесса на одном токене
   получают 409), тот же `TELEGRAM_SERVICE_SECRET`, что в `google-auth.env`.
@@ -364,6 +366,119 @@ infra/env/docs-index.sh test all --strict       # любой отказ — не
 | `verified` | digest'ы образов (и `git:<коммит>` wallet-infra), прошедшие smoke в этом контуре |
 | `history` | время, сервис, тег, digest, итог — каждый выкат и откат |
 | `infra/` | checkout выкатанного тега wallet-infra |
+
+### Необязательный TLS на входе
+
+Перед гейтвеем контура можно поставить HTTPS-прокси Caddy (сервис
+`tls-proxy`, профиль `tls`, change `add-tls-ingress`). Без него контур
+работает по HTTP, как раньше. Включается **одной строкой** в
+`infra/env/<env>.env` и списком адресов:
+
+```bash
+WALLET_TLS=true
+WALLET_TLS_MODE=tailscale          # internal (по умолчанию) | files | tailscale
+WALLET_TLS_HOST=192.168.1.105,192.168.1.105.nip.io,ivan-pc.tail5afb65.ts.net
+# WALLET_TLS_PORT уже задан: prod 8443, test 8444
+```
+
+Остальное выводит `tls.sh` при **каждом** вызове compose из скриптов (и
+`up.sh`, и `deploy.sh` одного сервиса), поэтому рассогласовать нельзя:
+
+| | Без TLS | `WALLET_TLS=true` |
+| --- | --- | --- |
+| профиль `tls`, сервис `tls-proxy` | нет | есть, порт `WALLET_TLS_PORT` |
+| порт гейтвея (8090/8091) | все интерфейсы | только `127.0.0.1` (скрипты, `curl` с хоста) |
+| `COOKIE_SECURE` у google-auth | `false` | `true` |
+| `TRUST_FORWARDED_HEADERS` у гейтвея | `false` | `true` |
+
+Эти два значения пишутся в `~/.local/state/wallet-envs/<env>/generated/` и
+перекрывают одноимённые строки секретов `google-auth.env`/`wallet-gateway.env`.
+Там же лежит сгенерированный `caddy/Caddyfile`. Руками их не правят.
+
+**Какой режим выбрать.** Режим задаётся для каждого контура отдельно.
+
+| Режим | Сертификат | Клиентам нужно | Когда |
+| --- | --- | --- | --- |
+| `internal` | CA Caddy (том `wallet-<env>_tls-data`), на любой IP или имя | установить корень CA | LAN без домена и без Tailscale |
+| `tailscale` | Let's Encrypt на имя узла `*.ts.net` от `tailscaled` хоста; остальные адреса списка — CA Caddy | быть в tailnet (для имени `.ts.net`) | есть Tailscale, домена нет |
+| `files` | `~/.config/wallet-secrets/<env>/tls/fullchain.pem` и `privkey.pem` (600) | ничего (при публичном CA) | есть домен и свой ACME-клиент |
+
+**Список адресов.** `WALLET_TLS_HOST` перечисляет через запятую все адреса,
+по которым клиенты открывают контур. Сертификат проверяется по адресу из URL,
+поэтому адреса не из списка не работают. Ограничения:
+
+- корректный сертификат по IP получает только **первый** IP списка:
+  по IP клиент не передаёт имя (SNI), а за docker-NAT прокси не видит, на
+  какой адрес хоста пришло соединение. Рекомендуется один IP плюс имена;
+- вход через Google по LAN-IP google-auth переписывает в `<IP>.nip.io`, и
+  после Google браузер возвращается по этому имени. Поэтому `<IP>.nip.io`
+  тоже нужен в списке.
+
+**Google.** URI сверяется буквально, а с TLS у него меняются схема и порт.
+Для каждого имени добавьте https-вариант с TLS-портом в `ALLOWED_REDIRECT_URIS`
+(`google-auth.env`) **и** в Authorized redirect URIs в Google Cloud Console.
+Старые http-варианты оставьте для отката. Для test:
+
+```
+https://ivan-pc.tail5afb65.ts.net:8444/auth/google/callback
+https://192.168.1.105.nip.io:8444/auth/google/callback
+```
+
+**Режим `tailscale`.** Один раз: в админке Tailscale → DNS включить MagicDNS
+и **HTTPS Certificates**. В список входит ровно одно имя `.ts.net`, и это имя
+этого узла (`tailscale status --json | jq -r .Self.DNSName`): чужое имя
+`tailscaled` не выдаст. `up.sh` проверяет имя и включённые сертификаты до
+запуска. В контейнере Jenkins сокета не видно, и проверка там пропускается
+с предупреждением. Каталог сокета (`/var/run/tailscale`, другой путь
+задаёт `WALLET_TAILSCALE_SOCKET`) монтируется в `tls-proxy` только в этом режиме.
+
+> Риск: через сокет процесс Caddy (root в контейнере) получает полный LocalAPI
+> tailscaled и может менять настройки Tailscale хоста. Если это неприемлемо,
+> берите `files` с сертификатом от `tailscale cert`, перевыпуская его по
+> таймеру. Новый сертификат подхватывается следующим `up.sh <env>`: метка
+> прокси меняется вместе с файлом, и compose пересоздаёт контейнер.
+>
+> ```bash
+> sudo tailscale cert --cert-file ~/.config/wallet-secrets/test/tls/fullchain.pem \
+>   --key-file ~/.config/wallet-secrets/test/tls/privkey.pem ivan-pc.tail5afb65.ts.net
+> ```
+>
+> После этого исправьте владельца (`sudo chown`) и права на ключ (`chmod 600`).
+
+**Корень CA на устройства** (режимы `internal` и `tailscale`, для адресов не `.ts.net`):
+
+```bash
+bash infra/env/export-ca.sh test            # → ./wallet-test-root.crt
+```
+
+Скрипт берёт только публичный `root.crt` из тома и проверяет, что в файле нет
+ключа. Корень у каждого контура свой. Куда ставить:
+
+- Android: «Настройки → Безопасность → Шифрование и учётные данные →
+  Установить сертификат → Сертификат ЦС». Приложение доверяет
+  пользовательским CA с 1.0.165;
+- Linux: `sudo cp wallet-test-root.crt /usr/local/share/ca-certificates/ && sudo update-ca-certificates`.
+  Chrome на Linux берёт сертификаты из NSS, поэтому ему нужен ещё импорт в
+  «Настройки → Конфиденциальность → Сертификаты → Центры сертификации».
+
+**Включение** (сначала test, потом prod):
+
+1. В обоих контурах выкачен wallet-gateway с `TRUST_FORWARDED_HEADERS`.
+2. Строки выше в `<env>.env`, тег wallet-infra и его выкат (или `up.sh <env>`).
+3. Проверки: `https://<адрес>:8444/healthz` отвечает `200` по каждому адресу
+   списка. С другой машины `http://<хост>:8091` не отвечает. После входа
+   cookie `session` приходят с `Secure`.
+4. Вход по паролю за TLS не требует `ALLOW_INSECURE_AUTH`: после проверки
+   задайте `WALLET_ALLOW_INSECURE_AUTH=false`.
+
+Откат: убрать `WALLET_TLS` (или `false`) и снова `up.sh <env>`. Порт гейтвея
+опять откроется на все интерфейсы, `COOKIE_SECURE` и доверие к заголовкам
+выключатся, а контейнер `tls-proxy` `up.sh` удалит сам. Том с CA остаётся, поэтому при повторном включении корень на устройствах переустанавливать не нужно.
+
+**Способы входа** (`WALLET_AUTH_METHODS`, `WALLET_REGISTRATION`,
+`WALLET_ALLOW_INSECURE_AUTH` в `<env>.env`) задавать необязательно. Если
+строка задана, она перекрывает такую же настройку в `google-auth.env`. Если
+нет, действует значение из секрета или умолчание google-auth.
 
 ## Дампы
 

@@ -36,8 +36,9 @@
 # (infra/monitoring) мог к ней подключиться в любом порядке запуска. Внутри
 # сети у сервисов обычные имена (db, google-auth, ...) для соседей и alias
 # <сервис>-<env> для Prometheus, который сидит в сетях обоих контуров
-# (design D11). На хост публикуются гейтвей и порт db — последний только на
-# 127.0.0.1 (для DBeaver/psql с этой машины); redis — только docker exec.
+# (design D11). На хост публикуются гейтвей (при TLS — только на 127.0.0.1,
+# а снаружи — tls-proxy) и порт db — последний только на 127.0.0.1 (для
+# DBeaver/psql с этой машины); redis — только docker exec.
 #
 # Логи — journald (logging ниже): Fluent Bit (infra/logging) берёт из него
 # контейнеры с префиксом wallet-prod-/wallet-test- и ставит поле env.
@@ -144,8 +145,12 @@ services:
     <<: *service
     image: ghcr.io/wallettransactions/google-auth:${GOOGLE_AUTH_TAG:?}
     mem_limit: 64m
+    # Второй файл пишет infra/env/tls.sh и перекрывает секрет: COOKIE_SECURE
+    # (true только за TLS-прокси) и настройки входа WALLET_AUTH_METHODS/… из
+    # infra/env/<env>.env, если они там заданы (change add-tls-ingress).
     env_file:
       - ${WALLET_SECRETS_DIR:?}/google-auth.env
+      - ${WALLET_GENERATED_DIR:?}/google-auth.env
     environment:
       HOST: 0.0.0.0
       PORT: 8080
@@ -389,13 +394,18 @@ services:
       wallet:
         aliases: ["wallet-docs-${WALLET_ENV}"]
 
-  # Единственная точка входа контура на хосте: prod :8090, test :8091.
+  # Точка входа контура на хосте: prod :8090, test :8091. При WALLET_TLS=true
+  # входом становится tls-proxy, а порт гейтвея — только 127.0.0.1 (для
+  # скриптов выката и curl с хоста), обойти прокси с другой машины нельзя.
   wallet-gateway:
     <<: *service
     image: ghcr.io/wallettransactions/wallet-gateway:${WALLET_GATEWAY_TAG:?}
     mem_limit: 64m
+    # Второй файл — TRUST_FORWARDED_HEADERS от infra/env/tls.sh: true только
+    # вместе с TLS-прокси и закрытым портом (change add-tls-ingress, design D3).
     env_file:
       - ${WALLET_SECRETS_DIR}/wallet-gateway.env
+      - ${WALLET_GENERATED_DIR:?}/wallet-gateway.env
     environment:
       HOST: 0.0.0.0
       PORT: 8090
@@ -437,10 +447,48 @@ services:
       retries: 5
       start_period: 5s
     ports:
-      - "${WALLET_GATEWAY_PORT:?}:8090"
+      - "${WALLET_GATEWAY_BIND-}${WALLET_GATEWAY_PORT:?}:8090"
     networks:
       wallet:
         aliases: ["wallet-gateway-${WALLET_ENV}"]
+
+  # TLS на входе контура — НЕОБЯЗАТЕЛЬНЫЙ модуль (change add-tls-ingress):
+  # профиль tls включает WALLET_TLS=true в infra/env/<env>.env, Caddyfile и
+  # источники монтирования готовит infra/env/tls.sh. Порт: prod 8443, test 8444.
+  # Режим сертификата — WALLET_TLS_MODE: internal (CA Caddy в томе tls-data,
+  # корень — infra/env/export-ca.sh), files (${WALLET_SECRETS_DIR}/tls/),
+  # tailscale (сертификат *.ts.net от tailscaled хоста через сокет; в других
+  # режимах вместо каталога сокета монтируется пустой каталог). Метка
+  # wallet.tls-config меняется вместе с Caddyfile/сертификатом — compose
+  # пересоздаёт прокси, Caddy сам файлы не перечитывает.
+  tls-proxy:
+    <<: *service
+    image: docker.io/library/caddy:2.10.2-alpine
+    profiles: [tls]
+    mem_limit: 64m
+    labels:
+      wallet.tls-config: ${WALLET_TLS_CONFIG_HASH:?}
+    volumes:
+      - ${WALLET_GENERATED_DIR:?}/caddy:/etc/caddy:ro
+      - tls-data:/data
+      - ${WALLET_TLS_FILES_SRC:?}:/tls:ro
+      - ${WALLET_TAILSCALE_DIR:?}:/var/run/tailscale
+    depends_on:
+      wallet-gateway:
+        condition: service_healthy
+    # Admin API Caddy (только 127.0.0.1 внутри контейнера): процесс жив и
+    # конфиг загружен. Сам прокси проверяет https://…/healthz при выкате.
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:2019/config/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    ports:
+      - "${WALLET_TLS_PORT:-0}:443"
+    networks:
+      wallet:
+        aliases: ["tls-proxy-${WALLET_ENV}"]
 
   # Telegram-бот (org/docs/TODO_telegram_bot.md): long polling до
   # api.telegram.org, входящих портов нет. К google-auth ходит напрямую
@@ -489,7 +537,9 @@ networks:
     name: wallet-${WALLET_ENV}
     external: true
 
-# Тома проекта: wallet-<env>_db-data, wallet-<env>_redis-data.
+# Тома проекта: wallet-<env>_db-data, wallet-<env>_redis-data,
+# wallet-<env>_tls-data (CA и сертификаты Caddy; закрытый ключ CA не покидает том).
 volumes:
   db-data:
   redis-data:
+  tls-data:
