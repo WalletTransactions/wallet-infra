@@ -146,10 +146,16 @@ Compose выставляет `COOKIE_SECURE`, `TRUST_FORWARDED_HEADERS` и пр�
   (D9): LAN-IP через CA Caddy; публичный доступ (Funnel) — вне этого change.
 - **Несколько IP в списке**: без SNI корректный сертификат гарантирован только
   первому IP (D9) → в README рекомендовать один IP плюс имена.
-- **Google и IP**: `redirect_uri` на IP Google для веб-клиента не принимает →
-  вход через Google работает только по именам списка, по IP — пароль.
-- **Google `redirect_uri`** для https нужно вручную добавить в Google Cloud
-  Console каждого контура → шаг миграции; пока не добавлен, вход через Google
+- **Google и IP**: `redirect_uri` на IP Google не принимает, поэтому google-auth
+  (`resolve_redirect_uri`) переписывает Host `192.168.*` в `<IP>.nip.io`, и после
+  Google браузер возвращается уже по этому имени → в режимах `internal` и
+  `tailscale` добавить `<IP>.nip.io` в `WALLET_TLS_HOST` (CA Caddy выпустит на него
+  сертификат), иначе колбэк упадёт с ошибкой сертификата.
+- **Google `redirect_uri`** сверяется буквально, а с TLS меняются схема и порт
+  (`http://ivan-pc.<tailnet>.ts.net:8091/…` → `https://…:8444/…`) → https-варианты
+  для каждого имени добавить и в `ALLOWED_REDIRECT_URIS`
+  (`${WALLET_SECRETS_DIR}/google-auth.env`), и в Google Cloud Console; http-варианты
+  оставить для отката. Это шаг миграции; пока не добавлен, вход через Google
   по TLS падает, а вход по паролю работает.
 - **RAM:** +2 процесса Caddy (до 64 МБ по лимиту, ~20–40 МБ фактически); диск
   ~40 МБ образ; GPU и Postgres не затрагиваются.
@@ -163,7 +169,11 @@ Compose выставляет `COOKIE_SECURE`, `TRUST_FORWARDED_HEADERS` и пр�
    https `redirect_uri` в Google Cloud Console), выгрузить корень CA.
    Для режима `tailscale`: в админке tailnet включить MagicDNS и HTTPS
    Certificates, `WALLET_TLS_MODE=tailscale`,
-   `WALLET_TLS_HOST=<LAN-IP>,<host>.<tailnet>.ts.net`, проверить оба адреса.
+   `WALLET_TLS_HOST=<LAN-IP>,<LAN-IP>.nip.io,<host>.<tailnet>.ts.net`, в
+   `ALLOWED_REDIRECT_URIS` и Google Console добавить
+   `https://<LAN-IP>.nip.io:8444/auth/google/callback` и
+   `https://<host>.<tailnet>.ts.net:8444/auth/google/callback`, проверить вход
+   через Google по IP и по имени `.ts.net`.
 3. Выкатить `add-password-auth` с `WALLET_AUTH_METHODS=both` в test.
 4. После проверки повторить для prod (порт 8443).
 

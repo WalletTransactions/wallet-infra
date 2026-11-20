@@ -47,9 +47,11 @@
 - **google-auth** (`add-password-auth`): переменные `AUTH_METHODS`, `REGISTRATION`,
   `ALLOW_INSECURE_AUTH`, `COOKIE_SECURE`.
 - **android-wallet** (`add-password-login`): доверие к пользовательскому CA.
-- **Google Cloud Console**: для входа через Google за TLS нужно добавить https
-  `redirect_uri` контура (вручную) для каждого имени из `WALLET_TLS_HOST`;
-  адреса-IP Google для веб-клиента не принимает, по ним работает только пароль.
+- **Google Cloud Console и `ALLOWED_REDIRECT_URIS` google-auth**: для входа
+  через Google за TLS нужно вручную добавить https-варианты `redirect_uri` с
+  TLS-портом для каждого имени из `WALLET_TLS_HOST` (URI сверяется буквально:
+  `http://…:8091` → `https://…:8444`). Вход по LAN-IP google-auth переписывает в
+  `<IP>.nip.io`, поэтому это имя тоже нужно в `WALLET_TLS_HOST`.
 - **Хост** (только режим `tailscale`): в tailnet включены MagicDNS и HTTPS
   Certificates, в контейнер прокси монтируется сокет `tailscaled`.
 - **RAM/диск**: Caddy ~20–40 МБ на контур (лимит 64 МБ), образ ~40 МБ; GPU не затрагивается.
