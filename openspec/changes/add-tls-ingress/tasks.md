@@ -27,7 +27,8 @@
 - `export-ca.sh test` выгрузил `root.crt` (`CN=Caddy Local Authority - 2026 ECC Root`), `grep PRIVATE` пусто.
 - В контейнерах `COOKIE_SECURE=true`, `TRUST_FORWARDED_HEADERS=true`; `ALLOW_INSECURE_AUTH=true` из секрета сохранён (`<env>.env` его не задаёт).
 - `GET /auth/google` выбирает `redirect_uri` `https://ivan-pc.<tailnet>.ts.net:8444/…` и `https://192.168.1.105.nip.io:8444/…` (по IP), с хоста напрямую — прежний `http://localhost:8091/…`.
-- Остаются 3.2 (вход через Google из браузера после добавления URI в Google Console, cookie `Secure`; затем prod) и 3.3 (Android).
+- Вход через Google из браузера по `https://ivan-pc.<tailnet>.ts.net:8444` прошёл (URI добавлены в Google Console); у cookie `session` и `refresh_token` в браузере стоят `Secure` и `HttpOnly`.
+- Остаются из 3.2 — prod (порт 8443, финальный тег) и 3.3 (Android).
 
 ## Workflow follow-up
 
