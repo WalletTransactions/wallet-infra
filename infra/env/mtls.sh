@@ -170,7 +170,9 @@ _mtls_load_clients() {
         [[ "$identity" =~ ^${mode}?(,(telegram|mcp-token|exchange)=${mode})*$ ]] \
             || die "WALLET_AUTH_IDENTITY=$identity в infra/env/$ENV_NAME.env — режим (off, observe, enforce-tls, enforce) и исключения вида telegram=enforce"
     fi
-    export WALLET_AUTH_MTLS_LOADED="$ENV_NAME"
+    # Не export: массив WALLET_AUTH_MTLS_SELECTED в дочерние процессы не передаётся, и
+    # флаг «загружено» из окружения родителя оставил бы потомка без массива (set -u).
+    WALLET_AUTH_MTLS_LOADED="$ENV_NAME"
 }
 
 # env_auth_mtls_enabled — включён mTLS служебного порта (хотя бы один клиент).
