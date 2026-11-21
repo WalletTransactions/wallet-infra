@@ -17,7 +17,7 @@
 _REDIS_KEY_PATTERNS="~refresh_token:* ~access_token:* ~user_refresh_tokens:* ~user_access_tokens:* ~mcp_token:* ~user_mcp_tokens:* ~tg_link_code:* ~authfail:*"
 _REDIS_GOOGLE_AUTH_CMDS="-@all +set +get +getdel +del +exists +sadd +srem +smembers +expire +expiretime +incr +ttl"
 # exporter: команды чтения статистики redis_exporter; точный список уточняется по ACL LOG на test (design D3).
-_REDIS_EXPORTER_CMDS="-@all +info +ping +client|list +config|get +dbsize +slowlog|len +slowlog|get +latency|latest +memory|usage +scan +type +pttl +llen +scard +zcard +hlen +xlen +strlen"
+_REDIS_EXPORTER_CMDS="-@all +info +ping +client|list +client|setname +config|get +dbsize +slowlog|len +slowlog|get +latency|latest +latency|histogram +memory|usage +scan +type +pttl +llen +scard +zcard +hlen +xlen +strlen"
 _REDIS_USERS=(google-auth health exporter admin)
 
 env_redis_mode() {
