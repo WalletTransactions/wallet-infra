@@ -500,6 +500,45 @@ bash infra/env/export-ca.sh test            # → ./wallet-test-root.crt
 - Проверка: из контейнера wallet-api `curl http://google-auth:8081` не отвечает;
   из wallet-ai `curl -X POST http://google-auth-internal:8081/internal/token/exchange` → 401.
 
+## mTLS на служебном порту google-auth (раньше остального контура)
+
+Критичный путь выдачи токенов (`/internal/telegram/*`, `/internal/mcp/token`,
+`/internal/token/exchange`) защищается отдельно и раньше остального контура
+(change `add-internal-mtls`, design D10–D13). Две настройки в `infra/env/<env>.env`:
+
+```bash
+# какие клиенты служебного порта ходят по mTLS (через запятую):
+WALLET_AUTH_MTLS_CLIENTS=wallet-telegram          # wallet-telegram, wallet-mcp, wallet-ai
+# проверка идентичности на google-auth (необязательно, по умолчанию observe):
+WALLET_AUTH_IDENTITY=observe                      # или observe,telegram=enforce
+```
+
+Что происходит: google-auth получает второй служебный слушатель `:8443` (mTLS, клиентский
+сертификат обязателен) рядом с обычным `:8081`; названные клиенты получают свой сертификат
+и `AUTH_INTERNAL_URL=https://google-auth-internal:8443`. Остальные клиенты остаются на
+`:8081` — переносить их можно по одному. Подключается `compose.auth-mtls.yaml`, сертификаты
+выпускает `mtls.sh`. Образы google-auth и названных клиентов должны иметь метку
+`org.wallet.mtls=1`, иначе `up.sh` и `deploy.sh` откажут.
+
+`WALLET_AUTH_IDENTITY` — режимы `INTERNAL_IDENTITY` google-auth (README google-auth,
+«Служебный порт»): по группам ручек `telegram`, `mcp-token`, `exchange` — `off`,
+`observe` (журнал и метрика `internal_identity_total`, ничего не отклоняется),
+`enforce-tls` (403 без сертификата и при CN ≠ actor), `enforce` (то же и 403 сервису не
+из списка). Порядок включения: `observe` → сутки без расхождений → `enforce` по группе.
+
+**Откат:** убрать строки и `up.sh <env>` — клиенты вернутся на `:8081` без mTLS; режим
+`observe` или `off` вместо `enforce` — перезапуск google-auth тем же способом. Данные и
+токены пользователей не затрагиваются.
+
+**Проверка расхождений (observe):**
+
+```bash
+docker logs --since 1h wallet-<env>-google-auth-1 2>&1 | grep '"event":"internal_identity"' | grep -v '"finding":"ok"'
+docker exec wallet-<env>-wallet-ai-1 curl -s http://google-auth:8080/metrics | grep internal_identity_total
+```
+
+`WALLET_INTERNAL_MTLS=true` (весь контур, ниже) подразумевает все три клиента.
+
 ## mTLS внутри контура
 
 Взаимная TLS-аутентификация между сервисами (change `add-internal-mtls`): каждый

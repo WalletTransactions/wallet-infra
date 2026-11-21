@@ -31,15 +31,10 @@ x-mtls-env: &mtls-env
   TLS_CA: /etc/wallet-tls/ca.pem
 
 services:
-  google-auth:
-    environment: *mtls-env
-    volumes:
-      - ${WALLET_MTLS_DIR:?}/google-auth:/etc/wallet-tls:ro
-    labels:
-      wallet.mtls-config: ${WALLET_MTLS_HASH_GOOGLE_AUTH:?}
-    healthcheck:
-      test: !override ["CMD", "curl", "-f", "--cacert", "/etc/wallet-tls/ca.pem", "--cert", "/etc/wallet-tls/tls.crt", "--key", "/etc/wallet-tls/tls.key", "https://google-auth:8080/healthz"]
-
+  # google-auth, wallet-telegram, wallet-mcp, wallet-ai: сертификаты, TLS_* и метки — в
+  # compose.auth-mtls.yaml (он подключается и при этом режиме). Healthcheck через https
+  # их серверам добавят шаги 5 и 7 (задача 8.3), публичный порт google-auth остаётся
+  # обычным HTTP: на нём гейтвей и JWKS (design D9, открытый вопрос).
   wallet-api:
     environment: *mtls-env
     volumes:
@@ -57,33 +52,6 @@ services:
       wallet.mtls-config: ${WALLET_MTLS_HASH_WALLET_REPORT:?}
     healthcheck:
       test: !override ["CMD", "curl", "-f", "--cacert", "/etc/wallet-tls/ca.pem", "--cert", "/etc/wallet-tls/tls.crt", "--key", "/etc/wallet-tls/tls.key", "https://wallet-report:8084/healthz"]
-
-  wallet-ai:
-    environment: *mtls-env
-    volumes:
-      - ${WALLET_MTLS_DIR:?}/wallet-ai:/etc/wallet-tls:ro
-    labels:
-      wallet.mtls-config: ${WALLET_MTLS_HASH_WALLET_AI:?}
-    healthcheck:
-      test: !override ["CMD", "curl", "-f", "--cacert", "/etc/wallet-tls/ca.pem", "--cert", "/etc/wallet-tls/tls.crt", "--key", "/etc/wallet-tls/tls.key", "https://wallet-ai:8087/healthz"]
-
-  wallet-telegram:
-    environment: *mtls-env
-    volumes:
-      - ${WALLET_MTLS_DIR:?}/wallet-telegram:/etc/wallet-tls:ro
-    labels:
-      wallet.mtls-config: ${WALLET_MTLS_HASH_WALLET_TELEGRAM:?}
-    healthcheck:
-      test: !override ["CMD", "curl", "-f", "--cacert", "/etc/wallet-tls/ca.pem", "--cert", "/etc/wallet-tls/tls.crt", "--key", "/etc/wallet-tls/tls.key", "https://wallet-telegram:8086/healthz"]
-
-  wallet-mcp:
-    environment: *mtls-env
-    volumes:
-      - ${WALLET_MTLS_DIR:?}/wallet-mcp:/etc/wallet-tls:ro
-    labels:
-      wallet.mtls-config: ${WALLET_MTLS_HASH_WALLET_MCP:?}
-    healthcheck:
-      test: !override ["CMD", "curl", "-f", "--cacert", "/etc/wallet-tls/ca.pem", "--cert", "/etc/wallet-tls/tls.crt", "--key", "/etc/wallet-tls/tls.key", "https://wallet-mcp:8088/healthz"]
 
   # Профиль docs (необязательный модуль): описание берётся из compose.yaml.
   wallet-docs:
