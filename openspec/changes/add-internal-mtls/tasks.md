@@ -11,10 +11,10 @@
 
 ## 2. Служебный порт google-auth и сеть `auth-internal` (без TLS)
 
-- [ ] 2.1 google-auth (репозиторий google-auth): второй слушатель (порт задаётся настройкой), на нём только `/internal/*`; `/internal/*` пока остаётся и на публичном порту. Проверка: юнит- и интеграционные тесты маршрутов; `curl` на служебный порт отдаёт `/internal/token/exchange` (401 без секрета), `/auth/*` на нём 404.
-- [ ] 2.2 `compose.yaml`: сеть `auth-internal` (google-auth, wallet-telegram, wallet-mcp, wallet-ai), служебный порт не публикуется на хост; обновить `up.sh`, если нужно создавать сеть. Проверка: `docker compose config`; из контейнера wallet-api `curl` на служебный порт google-auth не проходит.
-- [ ] 2.3 Клиенты `/internal/*` (wallet-telegram, wallet-mcp, wallet-ai) переключить на служебный адрес по настройке (`AUTH_INTERNAL_URL`, пустое значение — прежний `AUTH_SERVICE_URL`). Проверка: на test привязка бота, обмен токена в чате и MCP-токен проходят через служебный порт (в логах google-auth виден порт).
-- [ ] 2.4 README google-auth и `infra/env/README.md`: служебный порт и сеть. Проверка: инструкция выполнена как написано на test.
+- [x] 2.1 google-auth (репозиторий google-auth): второй слушатель (порт задаётся настройкой), на нём только `/internal/*`; `/internal/*` пока остаётся и на публичном порту. Проверка: юнит- и интеграционные тесты маршрутов; `curl` на служебный порт отдаёт `/internal/token/exchange` (401 без секрета), `/auth/*` на нём 404. _Сделано в google-auth 0.4.1 (`INTERNAL_PORT`); автотестов маршрутов нет — проверено вручную: служебный порт 401 на `/internal/token/exchange`, 404 на `/auth/*` и `/healthz`._
+- [x] 2.2 `compose.yaml`: сеть `auth-internal` (google-auth, wallet-telegram, wallet-mcp, wallet-ai), служебный порт не публикуется на хост; обновить `up.sh`, если нужно создавать сеть. Проверка: `docker compose config`; из контейнера wallet-api `curl` на служебный порт google-auth не проходит. _Сделано в wallet-infra v0.5.0-rc.2; на test: из wallet-api служебный порт не отвечает, из wallet-ai — 401._
+- [x] 2.3 Клиенты `/internal/*` (wallet-telegram, wallet-mcp, wallet-ai) переключить на служебный адрес по настройке (`AUTH_INTERNAL_URL`, пустое значение — прежний `AUTH_SERVICE_URL`). Проверка: на test привязка бота, обмен токена в чате и MCP-токен проходят через служебный порт (в логах google-auth виден порт). _Сделано (telegram 0.2.3, mcp 0.3.4, ai 0.2.3); на test: привязка бота и трата текстом, чат с `ledger_overview`, `token_exchange` wallet-ai→wallet-mcp→wallet-report — ok, отказов нет._
+- [x] 2.4 README google-auth и `infra/env/README.md`: служебный порт и сеть. Проверка: инструкция выполнена как написано на test. _README google-auth, `infra/env/README.md`, `.env.example` клиентов._
 
 ## 3. Фундамент mTLS (режим выключен)
 
