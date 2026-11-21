@@ -15,6 +15,9 @@ WALLET_INFRA_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # TLS на входе контура: env_tls_prepare, env_compose_profiles, env_setting.
 # shellcheck source=infra/env/tls.sh
 source "$(dirname "${BASH_SOURCE[0]}")/tls.sh"
+# mTLS внутри контура: env_mtls_enabled, env_mtls_prepare, env_mtls_check_images.
+# shellcheck source=infra/env/mtls.sh
+source "$(dirname "${BASH_SOURCE[0]}")/mtls.sh"
 
 # Базы контура и сервис, в образе которого лежат их миграции (design D4).
 # perf — база истории нагрузочных прогонов, миграции в этом репозитории.
@@ -161,9 +164,16 @@ env_lock() {
 # Caddyfile) выводятся здесь, на каждый вызов, — см. tls.sh.
 env_compose() {
     env_tls_prepare
+    env_mtls_prepare
+    # compose.mtls.yaml — только при WALLET_INTERNAL_MTLS=true (design D10): без
+    # режима описание контура остаётся прежним.
+    local -a files=(-f "$COMPOSE_DIR/compose.yaml")
+    if env_mtls_enabled; then
+        files+=(-f "$COMPOSE_DIR/compose.mtls.yaml")
+    fi
     COMPOSE_PROFILES="$(env_compose_profiles)" docker compose \
         --project-directory "$COMPOSE_DIR" \
-        -f "$COMPOSE_DIR/compose.yaml" \
+        "${files[@]}" \
         --env-file "$COMPOSE_DIR/infra/env/$ENV_NAME.env" \
         --env-file "$STATE_DIR/tags.env" \
         --env-file "$SECRETS_DIR/db.env" \

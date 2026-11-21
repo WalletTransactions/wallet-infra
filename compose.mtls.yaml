@@ -1,0 +1,105 @@
+# Взаимный TLS внутри контура (change add-internal-mtls, design D2, D3, D5, D10).
+#
+# Второй файл compose: infra/env/lib.sh (env_compose) добавляет его ТОЛЬКО при
+# WALLET_INTERNAL_MTLS=true в infra/env/<env>.env. Без режима этого файла нет
+# в команде, и описание контура — compose.yaml — не меняется.
+#
+# Что даёт каждому сервису:
+#   - переменные TLS_CERT, TLS_KEY, TLS_CA (читает wallet-common, net/tls): все
+#     три заданы — сервер требует клиентский сертификат, клиент проверяет сервер;
+#   - его пару (tls.crt, tls.key) и ca.pem — только read-only (design D3), из
+#     generated/mtls/<сервис> (выпускает infra/env/mtls.sh, WALLET_MTLS_DIR);
+#   - метку wallet.mtls-config (хэш сертификата): сертификат перевыпущен —
+#     compose пересоздаёт этот контейнер, сервис читает файлы только на старте;
+#   - healthcheck через curl с собственным сертификатом: в режиме порт не
+#     отвечает без клиентского сертификата. Имя в URL — имя сервиса (оно в SAN);
+#     127.0.0.1 в SAN нет.
+#
+# Режим включается целиком: у каждого образа должна быть метка org.wallet.mtls=1
+# (infra/env/up.sh и deploy.sh проверяют, design D8). Сервисы получают поддержку
+# по шагам change (tasks.md, группы 4–7), поэтому на практике режим включают
+# после последнего из них.
+#
+# Здесь пока нет: wallet-web (nginx, задача 7.5 — серверный mTLS и healthcheck по
+# loopback), Postgres и Redis (группа 9), prometheus (группа 8). Входной порт
+# гейтвея остаётся обычным HTTP — это граница контура (D9), поэтому у гейтвея
+# здесь только клиентская сторона и нет подмены healthcheck.
+
+x-mtls-env: &mtls-env
+  TLS_CERT: /etc/wallet-tls/tls.crt
+  TLS_KEY: /etc/wallet-tls/tls.key
+  TLS_CA: /etc/wallet-tls/ca.pem
+
+services:
+  google-auth:
+    environment: *mtls-env
+    volumes:
+      - ${WALLET_MTLS_DIR:?}/google-auth:/etc/wallet-tls:ro
+    labels:
+      wallet.mtls-config: ${WALLET_MTLS_HASH_GOOGLE_AUTH:?}
+    healthcheck:
+      test: !override ["CMD", "curl", "-f", "--cacert", "/etc/wallet-tls/ca.pem", "--cert", "/etc/wallet-tls/tls.crt", "--key", "/etc/wallet-tls/tls.key", "https://google-auth:8080/healthz"]
+
+  wallet-api:
+    environment: *mtls-env
+    volumes:
+      - ${WALLET_MTLS_DIR:?}/wallet-api:/etc/wallet-tls:ro
+    labels:
+      wallet.mtls-config: ${WALLET_MTLS_HASH_WALLET_API:?}
+    healthcheck:
+      test: !override ["CMD", "curl", "-f", "--cacert", "/etc/wallet-tls/ca.pem", "--cert", "/etc/wallet-tls/tls.crt", "--key", "/etc/wallet-tls/tls.key", "https://wallet-api:8082/healthz"]
+
+  wallet-report:
+    environment: *mtls-env
+    volumes:
+      - ${WALLET_MTLS_DIR:?}/wallet-report:/etc/wallet-tls:ro
+    labels:
+      wallet.mtls-config: ${WALLET_MTLS_HASH_WALLET_REPORT:?}
+    healthcheck:
+      test: !override ["CMD", "curl", "-f", "--cacert", "/etc/wallet-tls/ca.pem", "--cert", "/etc/wallet-tls/tls.crt", "--key", "/etc/wallet-tls/tls.key", "https://wallet-report:8084/healthz"]
+
+  wallet-ai:
+    environment: *mtls-env
+    volumes:
+      - ${WALLET_MTLS_DIR:?}/wallet-ai:/etc/wallet-tls:ro
+    labels:
+      wallet.mtls-config: ${WALLET_MTLS_HASH_WALLET_AI:?}
+    healthcheck:
+      test: !override ["CMD", "curl", "-f", "--cacert", "/etc/wallet-tls/ca.pem", "--cert", "/etc/wallet-tls/tls.crt", "--key", "/etc/wallet-tls/tls.key", "https://wallet-ai:8087/healthz"]
+
+  wallet-telegram:
+    environment: *mtls-env
+    volumes:
+      - ${WALLET_MTLS_DIR:?}/wallet-telegram:/etc/wallet-tls:ro
+    labels:
+      wallet.mtls-config: ${WALLET_MTLS_HASH_WALLET_TELEGRAM:?}
+    healthcheck:
+      test: !override ["CMD", "curl", "-f", "--cacert", "/etc/wallet-tls/ca.pem", "--cert", "/etc/wallet-tls/tls.crt", "--key", "/etc/wallet-tls/tls.key", "https://wallet-telegram:8086/healthz"]
+
+  wallet-mcp:
+    environment: *mtls-env
+    volumes:
+      - ${WALLET_MTLS_DIR:?}/wallet-mcp:/etc/wallet-tls:ro
+    labels:
+      wallet.mtls-config: ${WALLET_MTLS_HASH_WALLET_MCP:?}
+    healthcheck:
+      test: !override ["CMD", "curl", "-f", "--cacert", "/etc/wallet-tls/ca.pem", "--cert", "/etc/wallet-tls/tls.crt", "--key", "/etc/wallet-tls/tls.key", "https://wallet-mcp:8088/healthz"]
+
+  # Профиль docs (необязательный модуль): описание берётся из compose.yaml.
+  wallet-docs:
+    environment: *mtls-env
+    volumes:
+      - ${WALLET_MTLS_DIR:?}/wallet-docs:/etc/wallet-tls:ro
+    labels:
+      wallet.mtls-config: ${WALLET_MTLS_HASH_WALLET_DOCS:?}
+    healthcheck:
+      test: !override ["CMD", "curl", "-f", "--cacert", "/etc/wallet-tls/ca.pem", "--cert", "/etc/wallet-tls/tls.crt", "--key", "/etc/wallet-tls/tls.key", "https://wallet-docs:8089/healthz"]
+
+  # Входной порт — обычный HTTP (D9); mTLS только на клиентской стороне (к api,
+  # report, ai, mcp, web), healthcheck прежний.
+  wallet-gateway:
+    environment: *mtls-env
+    volumes:
+      - ${WALLET_MTLS_DIR:?}/wallet-gateway:/etc/wallet-tls:ro
+    labels:
+      wallet.mtls-config: ${WALLET_MTLS_HASH_WALLET_GATEWAY:?}

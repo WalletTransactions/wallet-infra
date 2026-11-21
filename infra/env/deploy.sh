@@ -204,6 +204,7 @@ digest="$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{en
     | grep "^ghcr.io/wallettransactions/$service@" | head -n1)"
 digest="${digest#*@}"
 [[ -n "$digest" ]] || die "у $image нет digest из registry"
+env_mtls_check_images "$service:$image_tag" # режим mTLS включён — образ должен его поддерживать (D8)
 revision="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image" 2>/dev/null || true)"
 echo "    digest $digest"
 
