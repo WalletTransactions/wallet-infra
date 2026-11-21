@@ -91,6 +91,11 @@ HTTPS — необязательный TLS-прокси контура (prod `:8
 `files` и `tailscale` — см. [infra/env/README.md](infra/env/README.md),
 «Необязательный TLS на входе». Тогда гейтвей публикуется только на `127.0.0.1`.
 
+Трафик между сервисами контура — обычный HTTP; взаимный TLS (mTLS) включается
+отдельно, `WALLET_INTERNAL_MTLS=true` в `infra/env/<env>.env`, свой CA на контур
+(`compose.mtls.yaml`, `infra/env/mtls.sh`) — см. [infra/env/README.md](infra/env/README.md),
+«mTLS внутри контура». Выключен по умолчанию.
+
 Снаружи открыт только гейтвей контура (или его TLS-прокси); Postgres — только на `127.0.0.1` этой машины
 (prod `:15555`, test `:15432`); redis — `docker exec`
 (см. [infra/db/README.md](infra/db/README.md), «Подключение к базе контура»).

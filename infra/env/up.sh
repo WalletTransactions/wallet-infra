@@ -18,6 +18,9 @@ env_init "${1:-}"
 env_check_secrets
 env_check_tags
 env_lock
+# mTLS включён — у каждого образа должна быть метка поддержки (design D8), иначе
+# отказ до любых действий, а не падение healthcheck посреди выката.
+env_mtls_check_images
 
 # Сеть external (compose.yaml): к ней подключается стек метрик, поэтому
 # создаётся отдельно от проекта и переживает `compose down`.

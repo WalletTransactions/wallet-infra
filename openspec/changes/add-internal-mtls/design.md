@@ -288,6 +288,22 @@ JWKS, `/internal/*` на нём убирается последним шагом
 
 ### Решено
 
+- **API httplib 0.53.1 (задача 3.1; `google-auth/third_party/httplib.h`).**
+  Серверная часть: `SSLServer(cert, key, client_ca_file, client_ca_dir)` — стр. 3139,
+  реализация 16930; если CA клиента передан, конструктор включает
+  `set_verify_client(ctx, true)` (стр. 16958), то есть `SSL_VERIFY_PEER |
+  SSL_VERIFY_FAIL_IF_NO_PEER_CERT` (стр. 18105): клиент без сертификата не проходит
+  рукопожатие. Идентичность клиента: `Request::peer_cert()` (стр. 1721, 17779) →
+  `tls::PeerCert::subject_cn()` (1641); поле `Request::ssl` пусто при обычном HTTP.
+  Клиентская часть: `httplib::Client(scheme_host_port, client_cert_path,
+  client_key_path)` (стр. 2919) для `https://…`, `set_ca_cert_path` (3116),
+  `enable_server_certificate_verification` и `enable_server_hostname_verification`
+  (3113–3114), `enable_system_ca` — его нужно выключить, иначе клиент доверяет и
+  системным корням, а не только CA контура. Расхождения с D1/D4: отдельный класс
+  `SSLClient` для вызовов не нужен (достаточно `Client` со схемой `https`); CN читается
+  через `Request::peer_cert()`, а не через сессию; keep-alive клиента выключен по
+  умолчанию (`set_keep_alive`, стр. 3083), включается в пуле группы 7.
+  Реализация — `wallet-common/net/tls` (`make_server`, `make_client`, `peer_service`).
 - **Состояние prod на 2026-11-21 (задача 1.1).** Выкачено: google-auth 0.4.0,
   wallet-mcp 0.3.3 (`JWT access: on`), wallet-ai 0.2.2 (чат включён),
   wallet-telegram 0.2.2. В google-auth обмен включён для `wallet-ai` и
