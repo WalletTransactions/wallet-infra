@@ -15,8 +15,8 @@
 # обычному HTTP, что и всегда. Включён — https, ca_file/cert_file/key_file из
 # <state>/<env>/generated/mtls/prometheus (монтируется в контейнер Prometheus, см. compose.yaml).
 # Исключения (design D9): гейтвей отдаёт метрики на служебном mTLS-порту :8443 (входной порт
-# остаётся HTTP); публичный порт google-auth (:8080) остаётся обычным HTTP — на нём гейтвей и
-# JWKS, вопрос про его /metrics открыт (задача 8.3).
+# остаётся HTTP); google-auth — на служебном mTLS-порту :8442 (SERVICE_MTLS_PORT), публичный :8080
+# остаётся HTTP для гейтвея и JWKS, но /metrics на нём нет.
 #
 # Печатает на stdout пути для compose: PROM_SCRAPE_DIR, PROM_MTLS_TEST_DIR, PROM_MTLS_PROD_DIR.
 set -euo pipefail
@@ -28,7 +28,7 @@ mkdir -p "$OUT_DIR"
 
 # имя:порт:порт-при-mTLS (гейтвей на mTLS — служебный порт)
 SERVICES=(
-    "google-auth:8080:8080"
+    "google-auth:8080:8442"
     "wallet-api:8082:8082"
     "wallet-report:8084:8084"
     "wallet-gateway:8090:8443"
@@ -66,7 +66,6 @@ tmp="$(mktemp "$OUT_DIR/services.yml.XXXXXX")"
         for entry in "${SERVICES[@]}"; do
             IFS=: read -r svc port mport <<<"$entry"
             use_tls=$tls
-            [[ "$svc" == "google-auth" ]] && use_tls=0
             p="$port"
             [[ $use_tls -eq 1 ]] && p="$mport"
             echo "  - job_name: $svc-$env"

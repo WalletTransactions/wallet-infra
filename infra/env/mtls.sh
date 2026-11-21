@@ -327,6 +327,13 @@ env_mtls_check_images() {
         [[ -n "$tag" ]] || continue
         # Закрытие служебных ручек понимает google-auth с 0.4.3; старый эту настройку
         # молча игнорирует, и оператор считал бы порт закрытым, а он открыт.
+        # Весь режим: /healthz и /metrics google-auth — на SERVICE_MTLS_PORT (с 0.4.4); старый образ
+        # его игнорирует, и healthcheck по https на :8442 не проходит.
+        if [[ "$s" == "google-auth" ]] && env_mtls_enabled; then
+            local base_full="${tag%%-rc.*}"
+            [[ "$(printf '%s\n%s\n' 0.4.4 "$base_full" | sort -V | head -n1)" == "0.4.4" ]] \
+                || die "WALLET_INTERNAL_MTLS=true требует google-auth не ниже 0.4.4 (служебный порт /healthz и /metrics), в контуре $tag"
+        fi
         if [[ "$s" == "google-auth" && ( "${WALLET_AUTH_ON_PUBLIC:-true}" == "false" || "${WALLET_AUTH_PLAIN_PORT:-8081}" == "0" ) ]]; then
             local base="${tag%%-rc.*}"
             [[ "$(printf '%s\n%s\n' 0.4.3 "$base" | sort -V | head -n1)" == "0.4.3" ]] \
