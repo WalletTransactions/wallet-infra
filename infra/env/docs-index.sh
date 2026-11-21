@@ -17,9 +17,14 @@
 # (job docs-index) по этой строке ставит UNSTABLE.
 #
 # Источник — рабочая папка организации (WALLET_TRANSACTIONS_PATH, иначе
-# каталог над wallet-infra), а не git-клон (D1): только *.md из openspec/,
-# обычные файлы без симлинков (D4). JSON собирает jq (D3): python3 в
-# контейнере Jenkins нет.
+# каталог над wallet-infra), а не git-клон (D1): *.md из openspec/ и файлы
+# README.md (вид ops в wallet-docs, только для админа) — обычные файлы без
+# симлинков (D4), без third_party/, node_modules/, .worktrees/, build/, vendor/.
+# JSON собирает jq (D3): python3 в контейнере Jenkins нет.
+#
+# mTLS: запрос идёт внутри контейнера wallet-docs; если в его окружении задан
+# TLS_CERT, — по https с сертификатом самого контейнера, иначе по http (change
+# docs-index-mtls-readme). Сеть и стек Jenkins в этом не участвуют.
 #
 # Токен: запрос отправляется ИЗНУТРИ контейнера wallet-docs (D2) — INDEX_TOKEN
 # остаётся в его окружении. В заголовок он попадает через файл (`curl -H
@@ -93,26 +98,69 @@ fi
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-# payload <каталог> <файл> — {"files":[{"path","content"}]} всех openspec/**/*.md.
+# collect <каталог> — пути файлов заливки (через NUL): openspec/**/*.md и README.md
+# любой глубины (вид ops в wallet-docs). Вендорные и служебные каталоги пропускаются,
+# симлинки не читаются (-type f их не берёт, каталоги по ссылкам find не обходит).
+collect() {
+    local dir="$1"
+    {
+        find "$dir/openspec" -type f -name '*.md' -print0
+        find "$dir" \( -name third_party -o -name node_modules -o -name .worktrees -o -name build \
+            -o -name vendor -o -name .git -o -name openspec \) -prune -o -type f -name README.md -print0
+    } | sort -z
+}
+
+# payload <каталог> <файл> — {"files":[{"path","content"}]} из collect.
 payload() {
     local dir="$1" out="$2" f
     : > "$tmp/items"
     while IFS= read -r -d '' f; do
         jq -n --arg path "${f#"$dir"/}" --rawfile content "$f" '{path: $path, content: $content}' >> "$tmp/items"
-    done < <(find "$dir/openspec" -type f -name '*.md' -print0 | sort -z)
+    done < <(collect "$dir")
     jq -s '{files: .}' "$tmp/items" > "$out"
 }
 
+# Код выхода upload, когда файл сертификата контейнера не читается (не код curl).
+readonly cert_unreadable=90
+
 # upload <репозиторий> <файл тела> — печатает тело ответа, последней строкой — код.
+# Всё выполняется ВНУТРИ контейнера wallet-docs (docker exec): сеть и стек Jenkins
+# не участвуют, 127.0.0.1 и имя wallet-docs разрешаются в самом контейнере. mTLS
+# определяется по его окружению (TLS_CERT задан — сервис слушает только по TLS):
+# https://wallet-docs:8089 с собственным сертификатом контейнера (имя — по SAN);
+# иначе обычный http://127.0.0.1:8089 (prod без mTLS).
 upload() {
-    # shellcheck disable=SC2016  # $INDEX_TOKEN и $1 раскрывает sh в контейнере
+    # shellcheck disable=SC2016  # $INDEX_TOKEN, $1, TLS_* раскрывает sh в контейнере
     docker exec -i "$container" sh -c '
         h="$(mktemp)"
         trap "rm -f \"$h\"" EXIT
         printf "X-Index-Token: %s\n" "${INDEX_TOKEN:-}" > "$h"
-        curl -sS --max-time 3000 -w "\n%{http_code}" -X PUT "http://127.0.0.1:8089/docs/index/$1" \
-            -H @"$h" -H "Content-Type: application/json" --data-binary @-
+        if [ -n "${TLS_CERT:-}" ]; then
+            [ -r "$TLS_CERT" ] && [ -r "${TLS_KEY:-}" ] && [ -r "${TLS_CA:-}" ] || exit '"$cert_unreadable"'
+            curl -sS --max-time 3000 --cacert "$TLS_CA" --cert "$TLS_CERT" --key "$TLS_KEY" \
+                -w "\n%{http_code}" -X PUT "https://wallet-docs:8089/docs/index/$1" \
+                -H @"$h" -H "Content-Type: application/json" --data-binary @-
+        else
+            curl -sS --max-time 3000 -w "\n%{http_code}" -X PUT "http://127.0.0.1:8089/docs/index/$1" \
+                -H @"$h" -H "Content-Type: application/json" --data-binary @-
+        fi
     ' sh "$1" < "$2"
+}
+
+# explain_failure <код выхода> <вывод> — причина отказа запроса, без токена: curl -sS
+# печатает только свою ошибку, значения заголовков в неё не попадают.
+explain_failure() {
+    local rc="$1" out="$2" detail
+    detail="$(sed -n '1p' <<< "$out" | tr -d '\r')"
+    if [[ "$rc" -eq "$cert_unreadable" ]]; then
+        echo "сертификат контейнера не читается (TLS_CERT, TLS_KEY или TLS_CA)"
+    elif [[ "$rc" -ge 125 && "$rc" -le 127 ]]; then
+        echo "docker exec не выполнен (код $rc): $detail"
+    elif [[ "$rc" =~ ^(35|51|58|59|60|77|83|91)$ ]] || grep -qiE 'ssl|tls|certificate' <<< "$out"; then
+        echo "TLS-рукопожатие не прошло (curl $rc): $detail"
+    else
+        echo "сервис недоступен (curl $rc): $detail"
+    fi
 }
 
 for repo in "${repos[@]}"; do
@@ -130,8 +178,10 @@ for repo in "${repos[@]}"; do
     fi
 
     started=$SECONDS
-    if ! response="$(upload "$repo" "$tmp/body.json" 2>&1)"; then
-        warn "$repo: запрос к wallet-docs не выполнен: $(tail -n1 <<< "$response")"
+    rc=0
+    response="$(upload "$repo" "$tmp/body.json" 2>&1)" || rc=$?
+    if [[ $rc -ne 0 ]]; then
+        warn "$repo: запрос к wallet-docs не выполнен: $(explain_failure "$rc" "$response")"
         continue
     fi
     code="$(tail -n1 <<< "$response")"
