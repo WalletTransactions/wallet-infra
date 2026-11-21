@@ -180,6 +180,32 @@ _mtls_load_clients() {
         [[ "$identity" =~ ^${mode}?(,(telegram|mcp-token|exchange)=${mode})*$ ]] \
             || die "WALLET_AUTH_IDENTITY=$identity в infra/env/$ENV_NAME.env — режим (off, observe, enforce-tls, enforce) и исключения вида telegram=enforce"
     fi
+    # Закрытие служебных ручек (design D11, задачи 6.1 и 6.2): по умолчанию ничего не
+    # закрывается. WALLET_AUTH_INTERNAL_PUBLIC=false — /internal/* пропадает с публичного
+    # порта google-auth; WALLET_AUTH_INTERNAL_PLAIN=false — служебный порт без TLS не
+    # слушается (остаётся :8443), для этого все три клиента должны быть на mTLS.
+    local pub plain
+    pub="$(env_setting WALLET_AUTH_INTERNAL_PUBLIC)"
+    plain="$(env_setting WALLET_AUTH_INTERNAL_PLAIN)"
+    local v
+    for v in "WALLET_AUTH_INTERNAL_PUBLIC=$pub" "WALLET_AUTH_INTERNAL_PLAIN=$plain"; do
+        [[ "${v#*=}" == "" || "${v#*=}" == "true" || "${v#*=}" == "false" ]] \
+            || die "$v в infra/env/$ENV_NAME.env — допустимо: true, false"
+    done
+    export WALLET_AUTH_ON_PUBLIC="${pub:-true}"
+    export WALLET_AUTH_PLAIN_PORT=8081
+    if [[ "$pub" == "false" || "$plain" == "false" ]]; then
+        [[ ${#WALLET_AUTH_MTLS_SELECTED[@]} -gt 0 ]] \
+            || die "WALLET_AUTH_INTERNAL_PUBLIC/PLAIN=false требуют служебного порта: задайте WALLET_AUTH_MTLS_CLIENTS в infra/env/$ENV_NAME.env"
+    fi
+    if [[ "$plain" == "false" ]]; then
+        [[ ${#WALLET_AUTH_MTLS_SELECTED[@]} -eq ${#WALLET_AUTH_MTLS_ALL[@]} ]] \
+            || die "WALLET_AUTH_INTERNAL_PLAIN=false: на mTLS должны быть все клиенты (${WALLET_AUTH_MTLS_ALL[*]}), сейчас: ${WALLET_AUTH_MTLS_SELECTED[*]:-никто}"
+        export WALLET_AUTH_PLAIN_PORT=0
+    fi
+    if [[ "$pub" == "false" ]] && grep -q '^WALLET_AUTH_INTERNAL_URL=$' "$COMPOSE_DIR/infra/env/$ENV_NAME.env" 2>/dev/null; then
+        die "WALLET_AUTH_INTERNAL_PUBLIC=false, но WALLET_AUTH_INTERNAL_URL пуст (клиенты вернулись на публичный порт) — уберите одно из двух"
+    fi
     # Не export: массив WALLET_AUTH_MTLS_SELECTED в дочерние процессы не передаётся, и
     # флаг «загружено» из окружения родителя оставил бы потомка без массива (set -u).
     WALLET_AUTH_MTLS_LOADED="$ENV_NAME"
@@ -299,6 +325,13 @@ env_mtls_check_images() {
         fi
         [[ -n "$tag" ]] || tag="$(current_tag "$s")"
         [[ -n "$tag" ]] || continue
+        # Закрытие служебных ручек понимает google-auth с 0.4.3; старый эту настройку
+        # молча игнорирует, и оператор считал бы порт закрытым, а он открыт.
+        if [[ "$s" == "google-auth" && ( "${WALLET_AUTH_ON_PUBLIC:-true}" == "false" || "${WALLET_AUTH_PLAIN_PORT:-8081}" == "0" ) ]]; then
+            local base="${tag%%-rc.*}"
+            [[ "$(printf '%s\n%s\n' 0.4.3 "$base" | sort -V | head -n1)" == "0.4.3" ]] \
+                || die "закрытие /internal/* (WALLET_AUTH_INTERNAL_PUBLIC/PLAIN=false) требует google-auth не ниже 0.4.3, в контуре $tag"
+        fi
         image="$(image_of "$s" "$tag")"
         docker image inspect "$image" >/dev/null 2>&1 || docker pull -q "$image" >/dev/null \
             || die "mtls: не удалось скачать $image для проверки метки"

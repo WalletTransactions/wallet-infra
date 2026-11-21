@@ -530,6 +530,20 @@ CA контура. Jenkins монтирует секреты только на �
 `enforce-tls` (403 без сертификата и при CN ≠ actor), `enforce` (то же и 403 сервису не
 из списка). Порядок включения: `observe` → сутки без расхождений → `enforce` по группе.
 
+**Закрытие остаточных путей** (после того, как все клиенты на mTLS):
+
+```bash
+WALLET_AUTH_INTERNAL_PUBLIC=false   # /internal/* пропадает с публичного порта google-auth (404)
+WALLET_AUTH_INTERNAL_PLAIN=false    # служебный порт без TLS (:8081) не слушается, остаётся :8443
+```
+
+Обе по умолчанию `true`. `PLAIN=false` допустим, только если в `WALLET_AUTH_MTLS_CLIENTS`
+все три клиента (иначе скрипт останавливается до любых действий); `PUBLIC=false` несовместим с
+пустым `WALLET_AUTH_INTERNAL_URL`. Нужна версия google-auth не ниже 0.4.3 — более старая
+игнорирует `INTERNAL_ON_PUBLIC_PORT` и ручки останутся открытыми (проверка — п. ниже).
+Проверка: `curl -s -o /dev/null -w '%{http_code}' -X POST http://google-auth:8080/internal/token/exchange`
+из любого контейнера контура — 404; `curl … http://google-auth-internal:8081/…` — отказ соединения.
+
 **Откат:** убрать строки и `up.sh <env>` — клиенты вернутся на `:8081` без mTLS; режим
 `observe` или `off` вместо `enforce` — перезапуск google-auth тем же способом. Данные и
 токены пользователей не затрагиваются.
