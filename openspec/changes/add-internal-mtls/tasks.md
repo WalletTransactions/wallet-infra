@@ -6,7 +6,7 @@
 
 ## 1. Предусловия
 
-- [ ] 1.1 Проверить, что выкачено на prod: `/internal/token/exchange`, `/internal/mcp/token`, MCP-токены, чат (по `GET /api/versions` и метрикам `token_exchange_total` на prod). Проверка: результат записан в design.md (Open Questions → решено); если часть не выкачена, порядок уточнён.
+- [x] 1.1 Проверить, что выкачено на prod: `/internal/token/exchange`, `/internal/mcp/token`, MCP-токены, чат (по `GET /api/versions` и метрикам `token_exchange_total` на prod). Проверка: результат записан в design.md (Open Questions → решено); если часть не выкачена, порядок уточнён. _Результат — в design.md, «Решено»: код выкачен, трафика на prod нет._
 - [ ] 1.2 Убедиться, что change `add-redis-auth` (пароль и ACL на Redis) выполнен на test, а для prod — по его группе 7. Проверка: `redis-cli` без пароля из контейнера wallet-api отказывает; вход, refresh-ротация и logout на test работают.
 
 ## 2. Служебный порт google-auth и сеть `auth-internal` (без TLS)
