@@ -54,9 +54,13 @@ _mtls_hash_var() {
 # _mtls_ca — создаёт CA контура, если его нет; печатает путь к каталогу CA.
 _mtls_ca() {
     local dir="$SECRETS_DIR/mtls-ca"
-    mkdir -p "$dir"
-    chmod 700 "$dir"
     if [[ ! -s "$dir/ca.key" || ! -s "$dir/ca.crt" ]]; then
+        # Jenkins монтирует секреты только на чтение: CA создаётся один раз на хосте
+        # (infra/env/mtls-init.sh), выкат его только читает.
+        [[ -w "$SECRETS_DIR" ]] \
+            || die "mtls: нет CA контура ($dir), а каталог секретов недоступен для записи (в Jenkins он read-only). Создайте CA один раз на хосте: bash infra/env/mtls-init.sh $ENV_NAME"
+        mkdir -p "$dir"
+        chmod 700 "$dir"
         echo "==> [$ENV_NAME] mtls: создаю CA контура ($dir)" >&2
         (
             umask 077
