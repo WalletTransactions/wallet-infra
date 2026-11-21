@@ -75,12 +75,28 @@ smoke_gateway() {
     return 1
 }
 
+# Сертификат контейнера для curl внутри него (mTLS, add-internal-mtls): тот же, что у сервиса.
+SMOKE_TLS_ARGS=(--cacert /etc/wallet-tls/ca.pem --cert /etc/wallet-tls/tls.crt --key /etc/wallet-tls/tls.key)
+
+# smoke_curl_url <сервис> <путь> — адрес для curl изнутри контейнера гейтвея. При включённом
+# mTLS сервисы отвечают только по https с клиентским сертификатом; обычными остаются входной порт
+# гейтвея (127.0.0.1) и публичный порт google-auth (D9). Пишет «аргументы curl, затем URL».
+smoke_curl_url() {
+    local svc="$1" path="$2" host="$1" port="${WALLET_SERVICE_PORT[$1]}"
+    [[ "$svc" == "wallet-gateway" ]] && host=127.0.0.1
+    if env_mtls_enabled && [[ "$svc" != "wallet-gateway" && "$svc" != "google-auth" ]]; then
+        printf '%s\n' "${SMOKE_TLS_ARGS[@]}" "https://$host:$port$path"
+    else
+        printf '%s\n' "http://$host:$port$path"
+    fi
+}
+
 # smoke_version <сервис> <ожидаемая версия> <коммит образа или пусто>
 smoke_version() {
-    local svc="$1" want="$2" revision="$3" host json got commit
-    host="$svc"
-    [[ "$svc" == "wallet-gateway" ]] && host=127.0.0.1
-    json="$(env_compose exec -T wallet-gateway curl -fsS "http://$host:${WALLET_SERVICE_PORT[$svc]}/version")" || {
+    local svc="$1" want="$2" revision="$3" json got commit
+    local -a curl_args
+    mapfile -t curl_args < <(smoke_curl_url "$svc" /version)
+    json="$(env_compose exec -T wallet-gateway curl -fsS "${curl_args[@]}")" || {
         echo "smoke: GET /version $svc не отвечает" >&2
         return 1
     }
@@ -108,10 +124,13 @@ smoke_extra() {
     local code
     case "$1" in
         wallet-mcp)
+            local -a mcp_args=(http://127.0.0.1:8088/api/mcp/)
+            # mTLS: сервер ждёт сертификат, а имя в URL — из SAN (127.0.0.1 в нём нет).
+            env_mtls_enabled && mcp_args=("${SMOKE_TLS_ARGS[@]}" https://wallet-mcp:8088/api/mcp/)
             code="$(env_compose exec -T wallet-mcp curl -s -o /dev/null -w '%{http_code}' \
                 -X POST -H 'Content-Type: application/json' \
                 --data '{"jsonrpc":"2.0","id":1,"method":"initialize"}' \
-                http://127.0.0.1:8088/api/mcp/)" || true
+                "${mcp_args[@]}")" || true
             echo "    POST /api/mcp/ без токена: ${code:-нет ответа}"
             if [[ "$code" != "401" ]]; then
                 echo "smoke: wallet-mcp без токена ответил ${code:-(нет ответа)}, ожидался 401" >&2
