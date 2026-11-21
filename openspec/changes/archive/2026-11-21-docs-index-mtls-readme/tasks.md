@@ -20,9 +20,9 @@
 
 ## 4. Выкат и Jenkins
 
-- [ ] 4.1 PR в wallet-infra (`gh pr merge --squash --auto`), после слияния тег wallet-infra и `deploy.sh test wallet-infra <тег>`; проверка: в `~/.local/state/wallet-envs/test/history` строка `wallet-infra … ok`, `<state>/test/infra/infra/env/docs-index.sh` содержит новую версию
-- [ ] 4.2 Запустить job `docs-index` вручную (`ENV=test`, `REPO=all`); проверка: сборка `SUCCESS`, в журнале итоговая строка каждого репозитория с `openspec/`, нет строк `docs-index: …`; по расписанию следующий ночной запуск тоже `SUCCESS`
-- [ ] 4.3 Спросить админским токеном про развёртывание (wallet-docs, change `docs-ops-kind`, задача 6.3); проверка: ответ из чанков вида `ops`
+- [x] 4.1 PR в wallet-infra (`gh pr merge --squash --auto`), после слияния тег wallet-infra и `deploy.sh test wallet-infra <тег>`; проверка: в `~/.local/state/wallet-envs/test/history` строка `wallet-infra … ok`, `<state>/test/infra/infra/env/docs-index.sh` содержит новую версию (2026-11-21: PR #65, тег `v0.5.0-rc.13` на `5f9b5c3`, на test в `history` 20:24 UTC, checkout содержит новый скрипт)
+- [x] 4.2 Запустить job `docs-index` вручную (`ENV=test`, `REPO=all`); проверка: сборка `SUCCESS`, в журнале итоговая строка каждого репозитория с `openspec/`, нет строк `docs-index: …`; по расписанию следующий ночной запуск тоже `SUCCESS` (2026-11-21: сборка #11 `SUCCESS`, 13 репозиториев, строк `docs-index: …` нет)
+- [x] 4.3 Спросить админским токеном про развёртывание (wallet-docs, change `docs-ops-kind`, задача 6.3); проверка: ответ из чанков вида `ops` (2026-11-21: админ получил ответ про mTLS с `sources` из README `wallet-mcp`, `wallet-telegram`, `wallet-infra`; `0.1.7-rc.1`)
 
 ## Workflow follow-up
 
