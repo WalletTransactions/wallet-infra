@@ -209,6 +209,11 @@ services:
     restart: "no"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # Задания сервисов (gen-scrape-config.sh) и клиентские сертификаты prometheus каждого контура
+      # для взаимного TLS (пустой каталог, если у контура режим выключен). Пути задаёт up.sh.
+      - ${PROM_SCRAPE_DIR:?запускайте через infra/monitoring/up.sh}:/etc/prometheus/scrape:ro
+      - ${PROM_MTLS_TEST_DIR:?}:/etc/prometheus/mtls/test:ro
+      - ${PROM_MTLS_PROD_DIR:?}:/etc/prometheus/mtls/prod:ro
       - prometheus-data:/prometheus
     ports:
       - "19090:9090" # http://localhost:19090 — PromQL-консоль самого Prometheus, страница /targets — какие скрейпы живы

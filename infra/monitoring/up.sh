@@ -54,6 +54,13 @@ for env in prod test; do
     fi
 done
 
+# Задания сервисов для Prometheus: по режиму каждого контура (https и сертификат prometheus при
+# взаимном TLS, иначе обычный HTTP). Печатает PROM_*=путь для compose.
+while IFS='=' read -r key value; do
+    [[ "$key" == PROM_* ]] && export "$key=$value"
+done < <(bash "$MONITORING_DIR/gen-scrape-config.sh")
+echo "==> scrape-конфиг сервисов: $PROM_SCRAPE_DIR (mTLS: test=${PROM_MTLS_TEST_DIR##*/}, prod=${PROM_MTLS_PROD_DIR##*/})"
+
 docker compose -f "$MONITORING_DIR/compose.yaml" up -d --remove-orphans
 
 # Пароль admin — из monitoring.env и для уже существующего тома grafana-data.
