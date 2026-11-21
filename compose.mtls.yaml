@@ -20,21 +20,25 @@
 # по шагам change (tasks.md, группы 4–7), поэтому на практике режим включают
 # после последнего из них.
 #
-# Здесь пока нет: wallet-web (nginx, задача 7.5 — серверный mTLS и healthcheck по
-# loopback), Postgres и Redis (группа 9), prometheus (группа 8). Входной порт
-# гейтвея остаётся обычным HTTP — это граница контура (D9), поэтому у гейтвея
-# здесь только клиентская сторона и нет подмены healthcheck.
+# Здесь пока нет: Postgres и Redis (группа 9) и prometheus (группа 8). Входной порт гейтвея
+# остаётся обычным HTTP — это граница контура (D9): у гейтвея mTLS на клиентской стороне и на
+# втором слушателе GATEWAY_MTLS_PORT (/healthz, /metrics, /version), healthcheck прежний.
+# wallet-web (nginx): `listen 80 ssl` с проверкой клиента, healthcheck — loopback 127.0.0.1:8081.
 
 x-mtls-env: &mtls-env
   TLS_CERT: /etc/wallet-tls/tls.crt
   TLS_KEY: /etc/wallet-tls/tls.key
   TLS_CA: /etc/wallet-tls/ca.pem
+  # Весь контур: сервер сервиса требует клиентский сертификат, а вызовы к другим сервисам идут
+  # по https (без этой переменной TLS_* включают только mTLS к служебному порту google-auth).
+  INTERNAL_MTLS: "true"
 
 services:
-  # google-auth, wallet-telegram, wallet-mcp, wallet-ai: сертификаты, TLS_* и метки — в
-  # compose.auth-mtls.yaml (он подключается и при этом режиме). Healthcheck через https
-  # их серверам добавят шаги 5 и 7 (задача 8.3), публичный порт google-auth остаётся
-  # обычным HTTP: на нём гейтвей и JWKS (design D9, открытый вопрос).
+  # google-auth: сертификат, TLS_* и метка — в compose.auth-mtls.yaml (подключается и при этом
+  # режиме); публичный порт остаётся обычным HTTP (гейтвей и JWKS, design D9, открытый вопрос
+  # про healthcheck и метрики — задача 8.3), mTLS — только на служебном порту :8443.
+  # wallet-telegram, wallet-mcp, wallet-ai: сертификаты, TLS_* и метки — там же; здесь —
+  # INTERNAL_MTLS (сервер на mTLS, вызовы внутри контура по https) и healthcheck.
   wallet-api:
     environment: *mtls-env
     volumes:
@@ -66,8 +70,41 @@ services:
   # Входной порт — обычный HTTP (D9); mTLS только на клиентской стороне (к api,
   # report, ai, mcp, web), healthcheck прежний.
   wallet-gateway:
-    environment: *mtls-env
+    environment:
+      <<: *mtls-env
+      # Второй слушатель: только /healthz, /metrics, /version по mTLS (для Prometheus, D9).
+      GATEWAY_MTLS_PORT: 8443
     volumes:
       - ${WALLET_MTLS_DIR:?}/wallet-gateway:/etc/wallet-tls:ro
     labels:
       wallet.mtls-config: ${WALLET_MTLS_HASH_WALLET_GATEWAY:?}
+
+  wallet-telegram:
+    environment:
+      INTERNAL_MTLS: "true"
+    healthcheck:
+      test: !override ["CMD", "curl", "-f", "--cacert", "/etc/wallet-tls/ca.pem", "--cert", "/etc/wallet-tls/tls.crt", "--key", "/etc/wallet-tls/tls.key", "https://wallet-telegram:8086/healthz"]
+
+  wallet-mcp:
+    environment:
+      INTERNAL_MTLS: "true"
+    healthcheck:
+      test: !override ["CMD", "curl", "-f", "--cacert", "/etc/wallet-tls/ca.pem", "--cert", "/etc/wallet-tls/tls.crt", "--key", "/etc/wallet-tls/tls.key", "https://wallet-mcp:8088/healthz"]
+
+  wallet-ai:
+    environment:
+      INTERNAL_MTLS: "true"
+    healthcheck:
+      test: !override ["CMD", "curl", "-f", "--cacert", "/etc/wallet-tls/ca.pem", "--cert", "/etc/wallet-tls/tls.crt", "--key", "/etc/wallet-tls/tls.key", "https://wallet-ai:8087/healthz"]
+
+  # nginx: слушатель `listen 80 ssl` с проверкой клиента выбирает entrypoint образа по
+  # INTERNAL_MTLS; healthcheck — loopback-блок 127.0.0.1:8081 (design D5), снаружи недоступный.
+  wallet-web:
+    environment:
+      INTERNAL_MTLS: "true"
+    volumes:
+      - ${WALLET_MTLS_DIR:?}/wallet-web:/etc/wallet-tls:ro
+    labels:
+      wallet.mtls-config: ${WALLET_MTLS_HASH_WALLET_WEB:?}
+    healthcheck:
+      test: !override ["CMD", "wget", "-qO-", "http://127.0.0.1:8081/healthz"]
