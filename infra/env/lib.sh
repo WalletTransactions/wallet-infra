@@ -165,9 +165,14 @@ env_lock() {
 env_compose() {
     env_tls_prepare
     env_mtls_prepare
-    # compose.mtls.yaml — только при WALLET_INTERNAL_MTLS=true (design D10): без
-    # режима описание контура остаётся прежним.
+    # Дополнительные файлы — только при включённых режимах (design D10): без них
+    # описание контура остаётся прежним. compose.auth-mtls.yaml — служебный порт
+    # google-auth и его клиенты (WALLET_AUTH_MTLS_CLIENTS или весь режим);
+    # compose.mtls.yaml — остальной контур (WALLET_INTERNAL_MTLS=true).
     local -a files=(-f "$COMPOSE_DIR/compose.yaml")
+    if env_mtls_enabled || env_auth_mtls_enabled; then
+        files+=(-f "$COMPOSE_DIR/compose.auth-mtls.yaml")
+    fi
     if env_mtls_enabled; then
         files+=(-f "$COMPOSE_DIR/compose.mtls.yaml")
     fi

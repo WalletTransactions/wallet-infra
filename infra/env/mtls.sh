@@ -2,9 +2,16 @@
 # Взаимный TLS внутри контура (openspec/changes/add-internal-mtls, design D2, D3,
 # D8) — подключается из lib.sh, сам не запускается.
 #
-# Единственный переключатель — WALLET_INTERNAL_MTLS=true в infra/env/<env>.env.
-# Выключен (по умолчанию) — этот файл ничего не создаёт, compose.mtls.yaml не
-# подключается, и `docker compose config` такой же, как без режима.
+# Два независимых переключателя в infra/env/<env>.env (design D10):
+#   - WALLET_INTERNAL_MTLS=true — весь контур (compose.mtls.yaml). Подразумевает
+#     и второй переключатель для всех трёх клиентов;
+#   - WALLET_AUTH_MTLS_CLIENTS=wallet-telegram[,wallet-mcp,wallet-ai] — только
+#     служебный порт google-auth для перечисленных клиентов (compose.auth-mtls.yaml):
+#     критичный путь выдачи токенов защищается раньше остального контура, клиенты
+#     переносятся по одному. WALLET_AUTH_IDENTITY — режим проверки идентичности
+#     на этом порту (INTERNAL_IDENTITY google-auth, по умолчанию observe).
+# Оба выключены (по умолчанию) — этот файл ничего не создаёт, дополнительные
+# compose-файлы не подключаются, и `docker compose config` такой же, как без режима.
 #
 # Включён — env_mtls_prepare при КАЖДОМ вызове compose (env_compose, как
 # env_tls_prepare):
@@ -22,6 +29,10 @@
 #
 # Файлы ключей читаемы всем на хосте (644): контейнер работает под другим uid, а
 # монтируется только своя пара. Граница — пользователь хоста, не права файлов.
+
+# Клиенты служебного порта google-auth (/internal/*, сеть auth-internal).
+# shellcheck disable=SC2034
+WALLET_AUTH_MTLS_ALL=(wallet-telegram wallet-mcp wallet-ai)
 
 # Имена сертификатов: сервисы контура и клиент Prometheus. wallet-docs выпускается
 # всегда (дёшево), используется только при включённом профиле docs.
@@ -120,49 +131,149 @@ EOF
     echo "==> [$ENV_NAME] mtls: выпущен сертификат $name (до $(openssl x509 -in "$out/tls.crt" -noout -enddate | cut -d= -f2))" >&2
 }
 
-# env_mtls_prepare — см. шапку файла. Один раз на процесс; ошибки — die до действий с контуром.
-env_mtls_prepare() {
-    [[ "${WALLET_MTLS_PREPARED:-}" == "$ENV_NAME" ]] && return 0
+# _mtls_load_clients — разбирает WALLET_AUTH_MTLS_CLIENTS в массив
+# WALLET_AUTH_MTLS_SELECTED (не в подоболочке: die должен завершать скрипт). При
+# WALLET_INTERNAL_MTLS=true — все клиенты. Идентичность проверяется здесь же.
+_mtls_load_clients() {
+    [[ "${WALLET_AUTH_MTLS_LOADED:-}" == "$ENV_NAME" ]] && return 0
+    WALLET_AUTH_MTLS_SELECTED=()
     local value
     value="$(env_setting WALLET_INTERNAL_MTLS)"
     [[ -z "$value" || "$value" == "true" || "$value" == "false" ]] \
         || die "WALLET_INTERNAL_MTLS=$value в infra/env/$ENV_NAME.env — допустимо: true, false"
-    if ! env_mtls_enabled; then
+    if [[ "$value" == "true" ]]; then
+        WALLET_AUTH_MTLS_SELECTED=("${WALLET_AUTH_MTLS_ALL[@]}")
+    else
+        local raw c ok a
+        raw="$(env_setting WALLET_AUTH_MTLS_CLIENTS)"
+        raw="${raw// /}"
+        local -a items=()
+        IFS=',' read -ra items <<<"$raw"
+        for c in "${items[@]}"; do
+            [[ -n "$c" ]] || continue
+            ok=0
+            for a in "${WALLET_AUTH_MTLS_ALL[@]}"; do
+                [[ "$a" == "$c" ]] && ok=1
+            done
+            [[ $ok -eq 1 ]] || die "WALLET_AUTH_MTLS_CLIENTS: '$c' — допустимо: ${WALLET_AUTH_MTLS_ALL[*]}"
+            WALLET_AUTH_MTLS_SELECTED+=("$c")
+        done
+    fi
+    local identity
+    identity="$(env_setting WALLET_AUTH_IDENTITY)"
+    if [[ -n "$identity" ]]; then
+        local mode='(off|observe|enforce-tls|enforce)'
+        [[ "$identity" =~ ^${mode}?(,(telegram|mcp-token|exchange)=${mode})*$ ]] \
+            || die "WALLET_AUTH_IDENTITY=$identity в infra/env/$ENV_NAME.env — режим (off, observe, enforce-tls, enforce) и исключения вида telegram=enforce"
+    fi
+    export WALLET_AUTH_MTLS_LOADED="$ENV_NAME"
+}
+
+# env_auth_mtls_enabled — включён mTLS служебного порта (хотя бы один клиент).
+env_auth_mtls_enabled() {
+    _mtls_load_clients
+    [[ ${#WALLET_AUTH_MTLS_SELECTED[@]} -gt 0 ]]
+}
+
+# env_mtls_prepare — см. шапку файла. Один раз на процесс; ошибки — die до действий с контуром.
+env_mtls_prepare() {
+    [[ "${WALLET_MTLS_PREPARED:-}" == "$ENV_NAME" ]] && return 0
+    _mtls_load_clients
+    if ! env_mtls_enabled && ! env_auth_mtls_enabled; then
         export WALLET_MTLS_PREPARED="$ENV_NAME"
         return 0
     fi
     command -v openssl >/dev/null || die "mtls: нужен openssl"
-    local gen="${WALLET_GENERATED_DIR:-$STATE_DIR/generated}" ca_dir name out
+    local gen="${WALLET_GENERATED_DIR:-$STATE_DIR/generated}" ca_dir name out var
     ca_dir="$(_mtls_ca)" || exit 1
     mkdir -p "$gen/mtls"
     chmod 755 "$gen/mtls"
-    for name in "${WALLET_MTLS_NAMES[@]}"; do
+    local -a names=()
+    if env_mtls_enabled; then
+        names=("${WALLET_MTLS_NAMES[@]}")
+    else
+        names=(google-auth "${WALLET_AUTH_MTLS_SELECTED[@]}")
+    fi
+    for name in "${names[@]}"; do
         out="$gen/mtls/$name"
         if _mtls_needs_issue "$name" "$out" "$ca_dir/ca.crt"; then
             _mtls_issue "$name" "$ca_dir" "$out"
         fi
         _mtls_install "$ca_dir/ca.crt" "$out/ca.pem" 644
-        local var
         var="$(_mtls_hash_var "$name")"
         export "$var=$(sha256sum "$out/tls.crt" "$out/ca.pem" | sha256sum | cut -c1-16)"
     done
     export WALLET_MTLS_DIR="$gen/mtls"
+    # Переменные compose.auth-mtls.yaml для каждого из трёх клиентов: включённому —
+    # его сертификат и https-адрес служебного TLS-порта, остальным — пустой каталог и
+    # пустые значения (compose подставит прежние).
+    local c suffix on
+    for c in "${WALLET_AUTH_MTLS_ALL[@]}"; do
+        suffix="${c#wallet-}"
+        suffix="${suffix^^}"
+        on=0
+        for name in "${WALLET_AUTH_MTLS_SELECTED[@]}"; do
+            [[ "$name" == "$c" ]] && on=1
+        done
+        if [[ $on -eq 1 ]]; then
+            export "WALLET_AUTHTLS_SRC_$suffix=$gen/mtls/$c"
+            export "WALLET_AUTHTLS_CERT_$suffix=/etc/wallet-tls/tls.crt"
+            export "WALLET_AUTHTLS_KEY_$suffix=/etc/wallet-tls/tls.key"
+            export "WALLET_AUTHTLS_CA_$suffix=/etc/wallet-tls/ca.pem"
+            export "WALLET_AUTHTLS_URL_$suffix=https://google-auth-internal:8443"
+            export "WALLET_AUTHTLS_HASH_$suffix=$(_mtls_hash_value "$c")"
+        else
+            export "WALLET_AUTHTLS_SRC_$suffix=$gen/empty"
+            export "WALLET_AUTHTLS_CERT_$suffix="
+            export "WALLET_AUTHTLS_KEY_$suffix="
+            export "WALLET_AUTHTLS_CA_$suffix="
+            export "WALLET_AUTHTLS_URL_$suffix="
+            export "WALLET_AUTHTLS_HASH_$suffix=off"
+        fi
+    done
     export WALLET_MTLS_PREPARED="$ENV_NAME"
 }
 
-# env_mtls_check_images [сервис[:тег]...] — режим включён: у каждого образа есть
-# метка org.wallet.mtls=1 (design D8). Без аргументов — все сервисы контура с тегом
-# в tags.env; без :тег — тег из tags.env (deploy.sh передаёт выкатываемый тег).
-# Образа нет на хосте — скачивается. Выключен — no-op.
+# _mtls_hash_value <имя> — значение хэша сертификата (после env_mtls_prepare).
+_mtls_hash_value() {
+    local var
+    var="$(_mtls_hash_var "$1")"
+    echo "${!var}"
+}
+
+# env_mtls_check_images [сервис[:тег]...] — режим включён: у каждого образа есть метка
+# org.wallet.mtls=1 (design D8). Без аргументов проверяются образы, которым режим нужен:
+# весь контур при WALLET_INTERNAL_MTLS=true, иначе google-auth и выбранные клиенты
+# служебного порта. Без :тег — тег из tags.env (deploy.sh передаёт выкатываемый тег).
+# Образа нет на хосте — скачивается. Режимы выключены — no-op.
 env_mtls_check_images() {
-    env_mtls_enabled || return 0
+    _mtls_load_clients
+    env_mtls_enabled || env_auth_mtls_enabled || return 0
     local -a svcs=("$@") bad=()
-    local s tag image label
+    local s tag image label name a
     if [[ ${#svcs[@]} -eq 0 ]]; then
-        for s in "${!WALLET_SERVICE_PORT[@]}"; do
-            [[ "$s" == "wallet-docs" ]] && ! env_docs_enabled && continue
-            svcs+=("$s")
+        if env_mtls_enabled; then
+            for s in "${!WALLET_SERVICE_PORT[@]}"; do
+                [[ "$s" == "wallet-docs" ]] && ! env_docs_enabled && continue
+                svcs+=("$s")
+            done
+        else
+            svcs=(google-auth "${WALLET_AUTH_MTLS_SELECTED[@]}")
+        fi
+    else
+        # Выкатывают один сервис: проверять его нужно, только если режим его касается.
+        local -a relevant=()
+        for s in "${svcs[@]}"; do
+            name="${s%%:*}"
+            if env_mtls_enabled || [[ "$name" == "google-auth" ]]; then
+                relevant+=("$s")
+                continue
+            fi
+            for a in "${WALLET_AUTH_MTLS_SELECTED[@]}"; do
+                [[ "$a" == "$name" ]] && relevant+=("$s")
+            done
         done
+        svcs=("${relevant[@]}")
     fi
     for s in "${svcs[@]}"; do
         tag=""
@@ -179,5 +290,5 @@ env_mtls_check_images() {
         [[ "$label" == "1" ]] || bad+=("$s:$tag")
     done
     [[ ${#bad[@]} -eq 0 ]] \
-        || die "WALLET_INTERNAL_MTLS=true, но образы без метки org.wallet.mtls=1 (собраны без поддержки mTLS): ${bad[*]}. Выкатите версии с поддержкой или выключите режим (design D8)"
+        || die "mTLS включён, но образы без метки org.wallet.mtls=1 (собраны без поддержки): ${bad[*]}. Выкатите версии с поддержкой или выключите режим (design D8)"
 }

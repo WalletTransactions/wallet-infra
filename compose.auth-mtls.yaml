@@ -1,0 +1,65 @@
+# Взаимный TLS на служебном порту google-auth (change add-internal-mtls, design D10,
+# D11, D12, задачи группы 4–5).
+#
+# Второй файл compose: infra/env/lib.sh (env_compose) добавляет его, когда в
+# infra/env/<env>.env задан WALLET_AUTH_MTLS_CLIENTS (или весь режим
+# WALLET_INTERNAL_MTLS=true). Без них его нет в команде, описание контура не меняется.
+#
+# Что даёт:
+#   - google-auth: свой сертификат и TLS_* (TLS_CERT, TLS_KEY, TLS_CA — читает
+#     wallet-common net/tls), служебный TLS-порт INTERNAL_TLS_PORT=8443 рядом с обычным
+#     INTERNAL_PORT=8081 (клиенты переезжают по одному) и режим проверки идентичности
+#     INTERNAL_IDENTITY из WALLET_AUTH_IDENTITY (по умолчанию observe);
+#   - клиенты wallet-telegram, wallet-mcp, wallet-ai: каждому — только если он назван в
+#     WALLET_AUTH_MTLS_CLIENTS — его сертификат и AUTH_INTERNAL_URL на https://…:8443.
+#     Остальным (infra/env/mtls.sh) подставляются пустые значения и пустой каталог, поэтому
+#     у них прежние переменные и ничего лишнего в контейнере.
+#
+# Метка wallet.mtls-config (хэш сертификата) пересоздаёт контейнер при перевыпуске:
+# сервис читает файлы только на старте.
+
+services:
+  google-auth:
+    environment:
+      TLS_CERT: /etc/wallet-tls/tls.crt
+      TLS_KEY: /etc/wallet-tls/tls.key
+      TLS_CA: /etc/wallet-tls/ca.pem
+      INTERNAL_TLS_PORT: 8443
+      INTERNAL_IDENTITY: ${WALLET_AUTH_IDENTITY:-observe}
+    volumes:
+      - ${WALLET_MTLS_DIR:?}/google-auth:/etc/wallet-tls:ro
+    labels:
+      wallet.mtls-config: ${WALLET_MTLS_HASH_GOOGLE_AUTH:?}
+
+  wallet-telegram:
+    environment:
+      TLS_CERT: ${WALLET_AUTHTLS_CERT_TELEGRAM:-}
+      TLS_KEY: ${WALLET_AUTHTLS_KEY_TELEGRAM:-}
+      TLS_CA: ${WALLET_AUTHTLS_CA_TELEGRAM:-}
+      AUTH_INTERNAL_URL: ${WALLET_AUTHTLS_URL_TELEGRAM:-${WALLET_AUTH_INTERNAL_URL-http://google-auth-internal:8081}}
+    volumes:
+      - ${WALLET_AUTHTLS_SRC_TELEGRAM:?}:/etc/wallet-tls:ro
+    labels:
+      wallet.mtls-config: ${WALLET_AUTHTLS_HASH_TELEGRAM:-off}
+
+  wallet-mcp:
+    environment:
+      TLS_CERT: ${WALLET_AUTHTLS_CERT_MCP:-}
+      TLS_KEY: ${WALLET_AUTHTLS_KEY_MCP:-}
+      TLS_CA: ${WALLET_AUTHTLS_CA_MCP:-}
+      AUTH_INTERNAL_URL: ${WALLET_AUTHTLS_URL_MCP:-${WALLET_AUTH_INTERNAL_URL-http://google-auth-internal:8081}}
+    volumes:
+      - ${WALLET_AUTHTLS_SRC_MCP:?}:/etc/wallet-tls:ro
+    labels:
+      wallet.mtls-config: ${WALLET_AUTHTLS_HASH_MCP:-off}
+
+  wallet-ai:
+    environment:
+      TLS_CERT: ${WALLET_AUTHTLS_CERT_AI:-}
+      TLS_KEY: ${WALLET_AUTHTLS_KEY_AI:-}
+      TLS_CA: ${WALLET_AUTHTLS_CA_AI:-}
+      AUTH_INTERNAL_URL: ${WALLET_AUTHTLS_URL_AI:-${WALLET_AUTH_INTERNAL_URL-http://google-auth-internal:8081}}
+    volumes:
+      - ${WALLET_AUTHTLS_SRC_AI:?}:/etc/wallet-tls:ro
+    labels:
+      wallet.mtls-config: ${WALLET_AUTHTLS_HASH_AI:-off}
