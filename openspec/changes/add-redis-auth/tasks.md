@@ -26,7 +26,7 @@
 ## 4. Мониторинг
 
 - [ ] 4.1 `infra/monitoring/up.sh` и `compose.yaml`: учётные данные exporter из `redis/exporter.env` каждого контура с префиксом `PROD_`/`TEST_`, `REDIS_USER`, `REDIS_PASSWORD` в `redis-exporter-<env>`. Проверка: `docker compose config` монитор-стека без паролей в выводе; exporter запускается.
-- [ ] 4.2 Список команд пользователя `exporter`: прогнать exporter с ACL и дочитать `ACL LOG`. Проверка: цель `redis-exporter` up по test, `redis_connected_clients` и `redis_memory_used_bytes` обновляются, отказов ACL нет; список зафиксирован в design.md.
+- [x] 4.2 Список команд пользователя `exporter`: прогнать exporter с ACL и дочитать `ACL LOG`. Проверка: цель `redis-exporter` up по test, `redis_connected_clients` и `redis_memory_used_bytes` обновляются, отказов ACL нет; список зафиксирован в design.md. _Настоящий redis_exporter v1.62.0 под пользователем `exporter` на test (v0.5.0-rc.16): `redis_up 1`, `redis_connected_clients`, `redis_memory_used_bytes`, `redis_db_keys` обновляются, `ACL LOG` и журнал exporter без отказов. Первый прогон показал нехватку `client|setname` и `latency|histogram` — добавлены; список зафиксирован в design.md (D3). Стек мониторинга как целое не запускался (остановлен), поэтому проверка — одиночным контейнером exporter в сети test._
 
 ## 5. Включение на test
 
