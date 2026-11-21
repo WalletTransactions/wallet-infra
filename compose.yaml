@@ -154,6 +154,12 @@ services:
     environment:
       HOST: 0.0.0.0
       PORT: 8080
+      # Служебный порт только для /internal/* (change add-internal-mtls, D11):
+      # привязан к адресу алиаса в сети auth-internal, а не к 0.0.0.0, иначе его
+      # достал бы любой контейнер общей сети контура. Старый образ переменные
+      # игнорирует.
+      INTERNAL_PORT: 8081
+      INTERNAL_HOST: google-auth-internal
       DATABASE_URL: postgresql://${AUTH_POSTGRES_USER}:${AUTH_POSTGRES_PASSWORD}@db:5432/${AUTH_POSTGRES_DB}
       REDIS_HOST: redis
       REDIS_PORT: 6379
@@ -175,6 +181,8 @@ services:
     networks:
       wallet:
         aliases: ["google-auth-${WALLET_ENV}"]
+      auth-internal:
+        aliases: ["google-auth-internal"]
 
   wallet-web:
     <<: *service
@@ -271,6 +279,10 @@ services:
       HOST: 0.0.0.0
       PORT: 8087
       AUTH_SERVICE_URL: http://google-auth:8080
+      # Служебный порт google-auth для /internal/* (сеть auth-internal). Пустое
+      # значение в infra/env/<env>.env (WALLET_AUTH_INTERNAL_URL=) — откат на
+      # AUTH_SERVICE_URL. JWKS по-прежнему берётся с AUTH_SERVICE_URL.
+      AUTH_INTERNAL_URL: ${WALLET_AUTH_INTERNAL_URL-http://google-auth-internal:8081}
       # Справочник счетов пользователя (его токеном) — при создании задания.
       WALLET_REPORT_URL: http://wallet-report:8084
       # Чат (wallet-ai add-chat-agent): инструменты чтения — через wallet-mcp
@@ -307,6 +319,7 @@ services:
     networks:
       wallet:
         aliases: ["wallet-ai-${WALLET_ENV}"]
+      auth-internal: {}
 
   # MCP-сервер только на чтение (POST /api/mcp/, репозиторий wallet-mcp):
   # LM Studio и другие MCP-клиенты спрашивают о тратах инструментами поверх
@@ -334,6 +347,10 @@ services:
       PORT: 8088
       # Обмен MCP-токена на JWT и JWKS.
       AUTH_SERVICE_URL: http://google-auth:8080
+      # Служебный порт google-auth для /internal/* (сеть auth-internal). Пустое
+      # значение в infra/env/<env>.env (WALLET_AUTH_INTERNAL_URL=) — откат на
+      # AUTH_SERVICE_URL. JWKS по-прежнему берётся с AUTH_SERVICE_URL.
+      AUTH_INTERNAL_URL: ${WALLET_AUTH_INTERNAL_URL-http://google-auth-internal:8081}
       WALLET_REPORT_URL: http://wallet-report:8084
     depends_on:
       google-auth:
@@ -351,6 +368,7 @@ services:
     networks:
       wallet:
         aliases: ["wallet-mcp-${WALLET_ENV}"]
+      auth-internal: {}
 
   # Справка по OpenSpec-спекам (репозиторий wallet-docs) — НЕОБЯЗАТЕЛЬНЫЙ
   # модуль (change wallet-docs-assistant): только в профиле docs, который
@@ -507,6 +525,10 @@ services:
       HOST: 0.0.0.0
       PORT: 8086
       AUTH_SERVICE_URL: http://google-auth:8080
+      # Служебный порт google-auth для /internal/* (сеть auth-internal). Пустое
+      # значение в infra/env/<env>.env (WALLET_AUTH_INTERNAL_URL=) — откат на
+      # AUTH_SERVICE_URL. JWKS по-прежнему берётся с AUTH_SERVICE_URL.
+      AUTH_INTERNAL_URL: ${WALLET_AUTH_INTERNAL_URL-http://google-auth-internal:8081}
       WALLET_REPORT_URL: http://wallet-report:8084
       WALLET_API_URL: http://wallet-api:8082
       # Трата свободным текстом. Не отвечает — бот работает строгим
@@ -531,11 +553,18 @@ services:
     networks:
       wallet:
         aliases: ["wallet-telegram-${WALLET_ENV}"]
+      auth-internal: {}
 
 networks:
   wallet:
     name: wallet-${WALLET_ENV}
     external: true
+  # /internal/* google-auth (change add-internal-mtls, D11): google-auth,
+  # wallet-telegram, wallet-mcp, wallet-ai. Создаёт и удаляет сам compose;
+  # internal — без выхода наружу (у участников он есть через wallet) и без
+  # публикации на хост.
+  auth-internal:
+    internal: true
 
 # Тома проекта: wallet-<env>_db-data, wallet-<env>_redis-data,
 # wallet-<env>_tls-data (CA и сертификаты Caddy; закрытый ключ CA не покидает том).
