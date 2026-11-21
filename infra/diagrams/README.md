@@ -154,6 +154,17 @@ wallet-bff").
   и для сравнения путь персонального токена `wmcp_…`. Вызовы из `wallet-ai` —
   план (`add-chat-agent`).
 
+- **`tls-ingress-components.puml`** — TLS на входе контура (change
+  `add-tls-ingress`): `tls-proxy` (Caddy) перед гейтвеем и три источника
+  сертификата — CA Caddy (`internal`), файлы (`files`) и Let's Encrypt от
+  `tailscaled` хоста (`tailscale`), какой сайт Caddyfile за какой режим
+  отвечает, и что из TLS-входа берёт google-auth (`redirect_uri`, `Secure`
+  cookie, вход по паролю только по https).
+- **`tls-ingress-login-sequence.puml`** — вход через Google за TLS-прокси с
+  двумя ветками рукопожатия по SNI: имя `.ts.net` (сертификат от
+  `tailscaled`) и IP / nip.io (CA Caddy), плюс режим `files`; какие
+  `redirect_uri` должны быть в Google Cloud Console для обеих веток.
+
 ## Как отрендерить
 
 **2026-09-09: впервые реально прогнаны через рендерер**, не только

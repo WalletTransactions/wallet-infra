@@ -1,0 +1,79 @@
+@startuml wallet-transaction-tls-ingress-login-sequence
+title WalletTransaction — вход через Google за TLS-прокси:\nдве ветки сертификата (Tailscale и CA Caddy) на одном контуре
+
+skinparam sequenceMessageAlign center
+skinparam maxMessageSize 220
+
+actor "Браузер" as Browser
+participant "tls-proxy\n(Caddy)\n:8444" as CADDY
+participant "tailscaled\n(хост)" as TSD
+participant "wallet-gateway\n:8090" as GW
+participant "google-auth\n:8080" as AUTH
+participant "Google\n(OAuth)" as GOOGLE
+
+== 1. TLS-рукопожатие — сертификат выбирается по SNI ==
+
+alt Ветка A: https://ivan-pc.tail5afb65.ts.net:8444  (tailnet, режим tailscale)
+  Browser -> CADDY: ClientHello, SNI = ivan-pc.tail5afb65.ts.net
+  CADDY -> TSD: LocalAPI по сокету: сертификат для этого имени\n(get_certificate tailscale)
+  TSD -> TSD: нет или скоро истекает → ACME у Let's Encrypt,\nключ ECDSA P-256 создаётся и хранится на хосте
+  TSD --> CADDY: сертификат + ключ (в память Caddy, на диск Caddy не пишется)
+  CADDY --> Browser: ServerHello + сертификат Let's Encrypt (90 дней)
+  note right of Browser
+    Доверие из коробки (публичный CA):
+    ничего на устройство ставить не нужно.
+    Имя доступно только из tailnet.
+  end note
+else Ветка B: https://192.168.1.105.nip.io:8444  (LAN, tls internal)
+  Browser -> CADDY: ClientHello, SNI = 192.168.1.105.nip.io\n(голый IP — без SNI, берётся default_sni)
+  CADDY -> CADDY: сертификат из тома tls-data,\nвыпущен CA Caddy (при первом обращении)
+  CADDY --> Browser: ServerHello + сертификат CA Caddy
+  note right of Browser
+    Работает, только если корень CA Caddy установлен
+    на устройство (infra/env/export-ca.sh).
+    Корень у каждого контура свой.
+  end note
+else Режим files (вместо A или B)
+  CADDY --> Browser: сертификат из /tls/fullchain.pem\n(например, от `tailscale cert`)
+end
+
+== 2. Вход через Google ==
+
+Browser -> CADDY: GET /auth/google (по HTTPS)
+CADDY -> GW: GET /auth/google\nX-Forwarded-Proto: https\nX-Forwarded-Host: <тот же хост:порт>
+GW -> AUTH: GET /auth/google (прозрачно, /auth/* без JWT-гейта)
+AUTH -> AUTH: resolve_redirect_uri:\nhttps://<хост>:8444/auth/google/callback\nдолжен быть в ALLOWED_REDIRECT_URIS
+AUTH --> GW: 302 → accounts.google.com ... redirect_uri=https://<хост>:8444/...
+GW --> CADDY: 302
+CADDY --> Browser: 302
+Browser -> GOOGLE: GET /o/oauth2/v2/auth?...redirect_uri=https://<хост>:8444/...
+GOOGLE --> Browser: 302 → https://<хост>:8444/auth/google/callback?code&state
+
+note over Browser, GOOGLE
+  Google сверяет redirect_uri буквально со списком в Cloud Console.
+  Для контура test в списке должны быть оба https-варианта:
+   https://ivan-pc.tail5afb65.ts.net:8444/auth/google/callback
+   https://192.168.1.105.nip.io:8444/auth/google/callback
+  Браузер возвращается на ТОТ ЖЕ адрес, с которого начал (ветка A или B).
+end note
+
+== 3. Колбэк и сессия ==
+
+Browser -> CADDY: GET /auth/google/callback?code&state
+CADDY -> GW: GET ... (X-Forwarded-Proto: https)
+GW -> AUTH: GET ...
+AUTH -> GOOGLE: обмен кода на токен (HTTPS, проверка сертификата Google)
+GOOGLE --> AUTH: id_token
+AUTH --> GW: 302 / + Set-Cookie: session=...; Secure; HttpOnly\n(Secure — потому что COOKIE_SECURE=true)
+GW --> CADDY: 302
+CADDY --> Browser: 302 + Set-Cookie (Secure)
+Browser -> CADDY: GET / (cookie уходит только по HTTPS)
+
+note over AUTH
+  Пароль вместо Google: POST /auth/login принимается только если
+  X-Forwarded-Proto: https (или ALLOW_INSECURE_AUTH=true).
+  Заголовку верят, только если на гейтвее TRUST_FORWARDED_HEADERS=true,
+  а его порт на хосте закрыт на 127.0.0.1 (обойти прокси нельзя).
+end note
+
+@enduml
