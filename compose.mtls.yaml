@@ -35,10 +35,17 @@ x-mtls-env: &mtls-env
 
 services:
   # google-auth: сертификат, TLS_* и метка — в compose.auth-mtls.yaml (подключается и при этом
-  # режиме); публичный порт остаётся обычным HTTP (гейтвей и JWKS, design D9, открытый вопрос
-  # про healthcheck и метрики — задача 8.3), mTLS — только на служебном порту :8443.
+  # режиме). Публичный порт остаётся обычным HTTP (гейтвей и JWKS, design D9), /internal/* — на
+  # служебном :8443, а /healthz и /metrics — только по mTLS на отдельном порту :8442
+  # (SERVICE_MTLS_PORT, google-auth не ниже 0.4.4; на публичном порту их нет).
   # wallet-telegram, wallet-mcp, wallet-ai: сертификаты, TLS_* и метки — там же; здесь —
   # INTERNAL_MTLS (сервер на mTLS, вызовы внутри контура по https) и healthcheck.
+  google-auth:
+    environment:
+      SERVICE_MTLS_PORT: "8442"
+    healthcheck:
+      test: !override ["CMD", "curl", "-f", "--cacert", "/etc/wallet-tls/ca.pem", "--cert", "/etc/wallet-tls/tls.crt", "--key", "/etc/wallet-tls/tls.key", "https://google-auth:8442/healthz"]
+
   wallet-api:
     environment: *mtls-env
     volumes:
