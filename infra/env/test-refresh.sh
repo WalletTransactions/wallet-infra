@@ -113,7 +113,7 @@ done
 echo "==> [test] вычистка привязок Telegram и сессий"
 tpsql "${test_name[auth]}" <<<"TRUNCATE telegram_links;"
 tpsql "${test_name[telegram]}" <<<"TRUNCATE tg_link, tg_update_offset;"
-env_compose exec -T redis redis-cli FLUSHALL >/dev/null
+env_redis_admin FLUSHALL >/dev/null
 
 trap - ERR
 bash "$WALLET_INFRA_DIR/infra/env/up.sh" test

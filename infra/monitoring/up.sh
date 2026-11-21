@@ -48,6 +48,19 @@ for env in prod test; do
         [[ -n "$value" ]] || { echo "ОШИБКА: в $db_env не задан $var" >&2; exit 1; }
         export "${prefix}_${var}=$value"
     done
+    # Redis с ACL (WALLET_REDIS_AUTH=compat|on в развёрнутом описании контура, change add-redis-auth):
+    # exporter ходит под своим пользователем. Режим выключен — без учётных данных, иначе AUTH к Redis без
+    # пароля завершился бы ошибкой.
+    STATE_ROOT="${WALLET_STATE_ROOT:-$HOME/.local/state/wallet-envs}"
+    redis_mode="$(sed -n 's/^WALLET_REDIS_AUTH=//p' "$STATE_ROOT/$env/infra/infra/env/$env.env" 2>/dev/null | tail -n1)"
+    export "${prefix}_REDIS_USER="
+    export "${prefix}_REDIS_PASSWORD="
+    if [[ "$redis_mode" == "compat" || "$redis_mode" == "on" ]]; then
+        exp_env="$SECRETS_ROOT/$env/redis/exporter.env"
+        [[ -s "$exp_env" ]] || { echo "ОШИБКА: у контура $env включён Redis с ACL, но нет $exp_env (bash infra/env/redis-init.sh $env)" >&2; exit 1; }
+        export "${prefix}_REDIS_USER=$(sed -n 's/^REDIS_USER=//p' "$exp_env" | tail -n1)"
+        export "${prefix}_REDIS_PASSWORD=$(sed -n 's/^REDIS_PASSWORD=//p' "$exp_env" | tail -n1)"
+    fi
     if ! docker network inspect "wallet-$env" >/dev/null 2>&1; then
         echo "==> создаю сеть wallet-$env"
         docker network create "wallet-$env" >/dev/null

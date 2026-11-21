@@ -15,6 +15,9 @@ WALLET_INFRA_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # TLS на входе контура: env_tls_prepare, env_compose_profiles, env_setting.
 # shellcheck source=infra/env/tls.sh
 source "$(dirname "${BASH_SOURCE[0]}")/tls.sh"
+# Пароль и ACL Redis: env_redis_enabled, env_redis_prepare, env_redis_admin, env_redis_apply.
+# shellcheck source=infra/env/redis.sh
+source "$(dirname "${BASH_SOURCE[0]}")/redis.sh"
 # mTLS внутри контура: env_mtls_enabled, env_mtls_prepare, env_mtls_check_images.
 # shellcheck source=infra/env/mtls.sh
 source "$(dirname "${BASH_SOURCE[0]}")/mtls.sh"
@@ -165,6 +168,7 @@ env_lock() {
 env_compose() {
     env_tls_prepare
     env_mtls_prepare
+    env_redis_prepare
     # Дополнительные файлы — только при включённых режимах (design D10): без них
     # описание контура остаётся прежним. compose.auth-mtls.yaml — служебный порт
     # google-auth и его клиенты (WALLET_AUTH_MTLS_CLIENTS или весь режим);
@@ -175,6 +179,10 @@ env_compose() {
     fi
     if env_mtls_enabled; then
         files+=(-f "$COMPOSE_DIR/compose.mtls.yaml")
+    fi
+    # Redis с ACL — только при WALLET_REDIS_AUTH=compat|on (change add-redis-auth): без него описание прежнее.
+    if env_redis_enabled; then
+        files+=(-f "$COMPOSE_DIR/compose.redis-auth.yaml")
     fi
     COMPOSE_PROFILES="$(env_compose_profiles)" docker compose \
         --project-directory "$COMPOSE_DIR" \

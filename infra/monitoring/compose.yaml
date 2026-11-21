@@ -182,6 +182,10 @@ services:
     restart: "no"
     environment:
       REDIS_ADDR: redis://redis-prod:6379
+      # Учётные данные пользователя exporter, когда у контура Redis с ACL (change add-redis-auth):
+      # их подставляет up.sh из redis/exporter.env контура; пусто — Redis без пароля, как раньше.
+      REDIS_USER: ${PROD_REDIS_USER:-}
+      REDIS_PASSWORD: ${PROD_REDIS_PASSWORD:-}
     ports:
       - "127.0.0.1:19121:9121"
     networks:
@@ -193,6 +197,10 @@ services:
     restart: "no"
     environment:
       REDIS_ADDR: redis://redis-test:6379
+      # Учётные данные пользователя exporter, когда у контура Redis с ACL (change add-redis-auth):
+      # их подставляет up.sh из redis/exporter.env контура; пусто — Redis без пароля, как раньше.
+      REDIS_USER: ${TEST_REDIS_USER:-}
+      REDIS_PASSWORD: ${TEST_REDIS_PASSWORD:-}
     ports:
       - "127.0.0.1:19122:9121"
     networks:
