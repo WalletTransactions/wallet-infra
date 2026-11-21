@@ -480,6 +480,26 @@ bash infra/env/export-ca.sh test            # → ./wallet-test-root.crt
 строка задана, она перекрывает такую же настройку в `google-auth.env`. Если
 нет, действует значение из секрета или умолчание google-auth.
 
+## Служебная сеть `auth-internal`
+
+`/internal/*` google-auth (выдача токенов по `X-Service-Secret`) вынесен на
+отдельный порт `8081` и сеть `auth-internal` (change `add-internal-mtls`, D11).
+В сети четыре сервиса: google-auth, wallet-telegram, wallet-mcp, wallet-ai.
+Сеть создаёт сам compose (`wallet-<env>_auth-internal`, `internal: true`, на
+хост не публикуется), `up.sh` ничего дополнительно не делает.
+
+- google-auth слушает порт на адресе алиаса `google-auth-internal` (не на
+  `0.0.0.0`), поэтому из общей сети `wallet-<env>` он недоступен.
+- Клиенты получают `AUTH_INTERNAL_URL=http://google-auth-internal:8081`
+  и ходят туда за `/internal/*`; JWKS берётся по-прежнему с `AUTH_SERVICE_URL`.
+- Откат одного контура: `WALLET_AUTH_INTERNAL_URL=` (пустое значение) в
+  `<env>.env` и `up.sh <env>` — клиенты вернутся на публичный порт.
+- Порядок выката: сначала версия google-auth со служебным портом, потом
+  клиенты. Клиент с `AUTH_INTERNAL_URL` и старым google-auth получит отказ в
+  соединении.
+- Проверка: из контейнера wallet-api `curl http://google-auth:8081` не отвечает;
+  из wallet-ai `curl -X POST http://google-auth-internal:8081/internal/token/exchange` → 401.
+
 ## Дампы
 
 `backup.sh` снимает `pg_dump -Fc` ролью `dumper` (только чтение) в
