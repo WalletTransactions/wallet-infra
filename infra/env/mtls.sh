@@ -79,6 +79,16 @@ _mtls_ca() {
     echo "$dir"
 }
 
+# _mtls_sans <имя> — DNS-имена сертификата: `<имя>`, `<имя>-<env>` (алиас для Prometheus) и
+# служебный алиас в сети auth-internal (у google-auth — по нему ходят клиенты /internal/*).
+_mtls_sans() {
+    local name="$1"
+    echo "$name"
+    echo "$name-$ENV_NAME"
+    [[ "$name" == "google-auth" ]] && echo "google-auth-internal"
+    return 0
+}
+
 # _mtls_needs_issue <имя> <каталог> <ca.crt> — 0, если сертификат нужно (пере)выпустить.
 _mtls_needs_issue() {
     local name="$1" out="$2" ca="$3" half=$((WALLET_MTLS_DAYS * 86400 / 2))
@@ -86,10 +96,10 @@ _mtls_needs_issue() {
     openssl verify -CAfile "$ca" "$out/tls.crt" >/dev/null 2>&1 || return 0
     openssl x509 -in "$out/tls.crt" -noout -checkend "$half" >/dev/null 2>&1 || return 0
     local host
-    for host in "$name" "$name-$ENV_NAME"; do
+    while read -r host; do
         openssl x509 -in "$out/tls.crt" -noout -checkhost "$host" 2>/dev/null \
             | grep -q 'does match' || return 0
-    done
+    done < <(_mtls_sans "$name")
     return 1
 }
 
@@ -121,7 +131,7 @@ _mtls_issue() {
 basicConstraints=critical,CA:FALSE
 keyUsage=critical,digitalSignature
 extendedKeyUsage=serverAuth,clientAuth
-subjectAltName=DNS:$name,DNS:$name-$ENV_NAME
+subjectAltName=$(_mtls_sans "$name" | sed 's/^/DNS:/' | paste -sd, -)
 EOF
     openssl x509 -req -in "$tmp/r.csr" -CA "$ca_dir/ca.crt" -CAkey "$ca_dir/ca.key" \
         -set_serial "0x$(openssl rand -hex 8)" -days "$WALLET_MTLS_DAYS" -sha256 \
