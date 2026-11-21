@@ -717,6 +717,52 @@ bash -c 'source infra/env/loadtest_env.sh && loadtest_override wallet-report REP
 bash -c 'source infra/env/loadtest_env.sh && loadtest_restore wallet-report'
 ```
 
+## Redis: пароль и ACL
+
+Redis контура хранит токены google-auth (refresh на 30 дней, access, MCP, коды привязки Telegram,
+счётчики неудачных входов). Без пароля его мог читать любой контейнер сети `wallet-<env>`.
+Change `add-redis-auth`: ACL-пользователи с минимальными правами, пароли по файлу на потребителя.
+Необязательно и **выключено по умолчанию**.
+
+| Пользователь | Права | Кто использует |
+| --- | --- | --- |
+| `google-auth` | только `set get getdel del exists sadd srem smembers expire expiretime incr ttl` на ключах своих префиксов | сервис |
+| `exporter` | чтение статистики (`info ping client\|list config\|get dbsize …`), без чтения и записи ключей | redis-exporter |
+| `health` | только `ping` | healthcheck контейнера |
+| `admin` | всё | оператор, `test-refresh.sh` |
+| `default` | `compat`: включён без пароля (совместимость и откат); `on`: выключен | старые клиенты |
+
+**Включить** (порядок важен, на каждом контуре; google-auth не ниже 0.4.5 должен быть выкачен **раньше**):
+
+```bash
+bash infra/env/redis-init.sh <env>        # один раз НА ХОСТЕ: пароли в ~/.config/wallet-secrets/<env>/redis/ (0600)
+# infra/env/<env>.env:  WALLET_REDIS_AUTH=compat
+bash infra/env/up.sh <env>                # Redis перезапускается с ACL, google-auth пересоздаётся (секунды; AOF и том целы)
+# проверка: docker exec … redis-cli CLIENT LIST — у google-auth user=google-auth, нет user=default
+# infra/env/<env>.env:  WALLET_REDIS_AUTH=on
+bash infra/env/up.sh <env>                # ACL LOAD без рестарта: default выключается
+```
+
+Пароли создаёт только хостовый `redis-init.sh`: Jenkins монтирует секреты на чтение, выкат их читает и пишет
+в `~/.local/state/wallet-envs/<env>/generated/redis/users.acl` одни SHA-256-хеши. Файлы `redis/*.env` —
+по одному на потребителя, чтобы пароль не попадал в чужие контейнеры: в контейнер google-auth — только его
+пароль, в контейнер Redis — только пароль `health`, `admin.env` никуда не монтируется.
+
+**Откат:** `WALLET_REDIS_AUTH=compat` (default снова открыт) и `up.sh` — ACL перечитывается без рестарта;
+`off` — возврат к Redis без пароля (Redis и google-auth пересоздаются). Данные Redis не затрагиваются.
+
+**Оператор** — под `admin`, пароль через `REDISCLI_AUTH`, не аргументом:
+
+```bash
+docker exec -it -e REDISCLI_AUTH="$(sed -n 's/^REDISCLI_AUTH=//p' ~/.config/wallet-secrets/<env>/redis/admin.env)" \
+    wallet-<env>-redis-1 redis-cli --user admin
+bash -c 'source infra/env/lib.sh; env_init test; env_redis_admin DBSIZE'   # то же через скрипты контура
+```
+
+Внутри контейнера Redis уже задан `REDISCLI_AUTH` пользователя `health`, поэтому `redis-cli` без `--user admin`
+и без своего `REDISCLI_AUTH` при выключенном `default` ответит `WRONGPASS` — это нормально. TLS до Redis ещё нет
+(`add-internal-mtls`, группа 9): пароль защищает от неаутентифицированного доступа, но не от перехвата в сети.
+
 ## Контур руками
 
 ```bash
@@ -725,7 +771,7 @@ bash -c 'source infra/env/lib.sh; env_init test; env_compose ps'
 bash -c 'source infra/env/lib.sh; env_init test; env_compose logs -f wallet-api'
 
 docker exec -it wallet-test-db-1 sh -c 'psql -U "$POSTGRES_USER" -d wallet_api'
-docker exec -it wallet-test-redis-1 redis-cli
+docker exec -it wallet-test-redis-1 redis-cli   # с WALLET_REDIS_AUTH — под admin, см. «Redis: пароль и ACL»
 ```
 
 Остановить контур, не теряя данных: `env_compose stop`. `env_compose down -v`

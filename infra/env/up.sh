@@ -31,6 +31,8 @@ fi
 
 echo "==> [$ENV_NAME] db, redis"
 env_compose up -d --wait db redis
+# Redis с ACL (WALLET_REDIS_AUTH=compat|on): применить users.acl без рестарта (смена compat ↔ on).
+env_redis_apply
 
 # Через bash, а не по биту исполнения: рабочая папка на NTFS его не хранит.
 for base in auth wallet telegram ai; do

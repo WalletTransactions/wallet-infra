@@ -1,0 +1,27 @@
+# Redis с аутентификацией и ACL (change add-redis-auth, design D1–D6).
+#
+# Второй файл compose: infra/env/lib.sh (env_compose) добавляет его ТОЛЬКО при WALLET_REDIS_AUTH=compat
+# или on в infra/env/<env>.env. Без режима этого файла нет в команде, описание контура не меняется.
+#
+#   - redis: --aclfile из каталога generated/redis (infra/env/redis.sh; каталог, а не файл — скрипты пишут
+#     атомарно, и одиночный bind-mount указывал бы на старый inode), healthcheck под пользователем health
+#     (в окружении контейнера только пароль health, env_file — redis/health.env);
+#   - google-auth: учётные данные пользователя google-auth (REDIS_USERNAME, REDIS_PASSWORD из
+#     redis/google-auth.env — в окружении только они, пароли остальных пользователей в его контейнер не попадают).
+#
+# Пароли создаёт один раз на хосте infra/env/redis-init.sh; выкат их только читает. Смена compat ↔ on —
+# ACL LOAD без рестарта (infra/env/up.sh, env_redis_apply).
+
+services:
+  redis:
+    command: !override ["redis-server", "--appendonly", "yes", "--aclfile", "/etc/redis-acl/users.acl"]
+    env_file:
+      - ${WALLET_SECRETS_DIR:?}/redis/health.env
+    volumes:
+      - ${WALLET_REDIS_ACL_DIR:?}:/etc/redis-acl:ro
+    healthcheck:
+      test: !override ["CMD", "redis-cli", "--user", "health", "ping"]
+
+  google-auth:
+    env_file:
+      - ${WALLET_SECRETS_DIR:?}/redis/google-auth.env

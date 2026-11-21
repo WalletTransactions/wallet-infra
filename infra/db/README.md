@@ -183,4 +183,4 @@ app-роль или `wallet_reader` (только SELECT); мигратор ви
 docker exec -it wallet-test-db-1 sh -c 'psql -U "$POSTGRES_USER" -d wallet_api'
 ```
 
-Redis наружу не публикуется: `docker exec -it wallet-<env>-redis-1 redis-cli`.
+Redis наружу не публикуется: `docker exec -it wallet-<env>-redis-1 redis-cli`. С включённым `WALLET_REDIS_AUTH` — под `admin` (`infra/env/README.md`, «Redis: пароль и ACL»).
