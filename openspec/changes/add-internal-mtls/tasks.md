@@ -33,10 +33,10 @@
 
 ## 5. Цепочка обмена: wallet-ai → google-auth → wallet-mcp → google-auth
 
-- [ ] 5.1 wallet-ai: `net/tls` для вызовов `/internal/token/exchange`, метка образа; observe на test. Проверка: чат на test отвечает, в журнале CN `wallet-ai` совпадает с actor по секрету.
-- [ ] 5.2 wallet-mcp: `CPPHTTPLIB_OPENSSL_SUPPORT` в CMake, `net/tls` для вызовов `/internal/token/exchange` и `/internal/mcp/token`, метка образа; observe на test. Проверка: вызов инструмента MCP через `/api/mcp/` с JWT и с `wmcp_…`, цепочка `act {sub: wallet-mcp, act {sub: wallet-ai}}` в выданном JWT неизменна.
+- [x] 5.1 wallet-ai: `net/tls` для вызовов `/internal/token/exchange`, метка образа; observe на test. Проверка: чат на test отвечает, в журнале CN `wallet-ai` совпадает с actor по секрету. _wallet-ai 0.2.4 (`net/tls`, метка образа). На test с 2026-11-21 16:55 в observe: `exchange ok cn="wallet-ai"`, чат отвечает (`outcome: answer`, 3 шага)._
+- [x] 5.2 wallet-mcp: `CPPHTTPLIB_OPENSSL_SUPPORT` в CMake, `net/tls` для вызовов `/internal/token/exchange` и `/internal/mcp/token`, метка образа; observe на test. Проверка: вызов инструмента MCP через `/api/mcp/` с JWT и с `wmcp_…`, цепочка `act {sub: wallet-mcp, act {sub: wallet-ai}}` в выданном JWT неизменна. _wallet-mcp 0.3.5: `CPPHTTPLIB_OPENSSL_SUPPORT` в CMake, `net/tls`, метка образа. На test в observe: `mcp-token ok cn="wallet-mcp"` (вызов по `wmcp_…`, 200), `exchange ok cn="wallet-mcp"` (аудитория wallet-report, `credential: jwt`); `token_exchange_total` — только `ok`._
 - [ ] 5.3 enforce-tls и enforce для звеньев `wallet-ai` и `wallet-mcp` по одному, по критерию перехода. Проверка: сертификат wallet-mcp с секретом wallet-ai — отказ и обе идентичности в журнале; чат и MCP работают.
-- [ ] 5.4 README сервисов (telegram, ai, mcp, google-auth): переменные `TLS_*`, `AUTH_INTERNAL_URL`, состояния D12. Проверка: пример запуска из README работает локально.
+- [x] 5.4 README сервисов (telegram, ai, mcp, google-auth): переменные `TLS_*`, `AUTH_INTERNAL_URL`, состояния D12. Проверка: пример запуска из README работает локально. _README wallet-ai, wallet-mcp, wallet-telegram, google-auth и `.env.example` описывают `TLS_*`, `AUTH_INTERNAL_URL` и режимы._
 
 ## 6. Закрыть остаточные пути `/internal/*`
 
