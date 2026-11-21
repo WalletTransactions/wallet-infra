@@ -25,6 +25,10 @@ services:
       TLS_KEY: /etc/wallet-tls/tls.key
       TLS_CA: /etc/wallet-tls/ca.pem
       INTERNAL_TLS_PORT: 8443
+      # Закрытие служебных ручек (задачи 6.1, 6.2): значения выводит infra/env/mtls.sh из
+      # WALLET_AUTH_INTERNAL_PUBLIC / WALLET_AUTH_INTERNAL_PLAIN; по умолчанию как раньше.
+      INTERNAL_ON_PUBLIC_PORT: ${WALLET_AUTH_ON_PUBLIC:-true}
+      INTERNAL_PORT: ${WALLET_AUTH_PLAIN_PORT:-8081}
       INTERNAL_IDENTITY: ${WALLET_AUTH_IDENTITY:-observe}
     volumes:
       - ${WALLET_MTLS_DIR:?}/google-auth:/etc/wallet-tls:ro
