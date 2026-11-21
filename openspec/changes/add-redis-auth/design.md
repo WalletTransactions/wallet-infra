@@ -49,6 +49,8 @@
 Список команд google-auth сверяется с клиентом и с реальным набором ключей на prod и test перед выкатом (задача 1.1), а затем проверяется по `ACL LOG` на test (5.3–5.4): любой отказ — недостающее право, а не повод ослаблять ACL.
 Ограничение: ACL не защищает от злоумышленника, получившего учётные данные самого google-auth (он законно читает и пишет токены); он защищает от остальных контейнеров и от лишних команд.
 
+Проверено на настоящем Redis 7 (2026-11-21): список команд `exporter` на старте — `info ping client|list config|get dbsize slowlog|len slowlog|get latency|latest memory|usage scan type pttl llen scard zcard hlen xlen strlen` (уточняется по `ACL LOG` на test, задача 4.2). В ACL-файле Redis комментарии недопустимы (каждая строка — `user …`), поэтому происхождение файла описано в `infra/env/redis.sh`, а не в самом файле. `redis-cli` внутри контейнера Redis подхватывает `REDISCLI_AUTH` пользователя `health` из его `env_file`: при выключенном `default` оператору нужен явный `--user admin` со своим `REDISCLI_AUTH`.
+
 ### D4. Учётные данные: по файлу на потребителя
 
 `infra/env/redis-auth.sh` (вызывается из `up.sh` до старта Redis, повторяем): при отсутствии создаёт `~/.config/wallet-secrets/<env>/redis/` и в нём случайные пароли (32 байта, hex), права 0600:
