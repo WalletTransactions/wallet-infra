@@ -26,9 +26,9 @@
 
 ## 4. Пилот: google-auth ↔ wallet-telegram
 
-- [ ] 4.1 google-auth: `net/tls` на служебном порту, `CPPHTTPLIB_OPENSSL_SUPPORT` (уже есть), метка образа; три состояния observe / enforce-tls / enforce (D12), настройка; таблица прав по CN (D4); журнал и метрика расхождений. Проверка: юнит-тесты таблицы прав и состояний; сборка образа CI.
-- [ ] 4.2 wallet-telegram: `net/tls` для вызовов к google-auth на служебном порту, метка образа. Проверка: сборка; привязка и команда бота на test.
-- [ ] 4.3 Включить observe на test для служебного порта. Проверка: бот работает как раньше, в журнале google-auth каждый запрос бота с CN `wallet-telegram`, расхождений нет.
+- [x] 4.1 google-auth: `net/tls` на служебном порту, `CPPHTTPLIB_OPENSSL_SUPPORT` (уже есть), метка образа; три состояния observe / enforce-tls / enforce (D12), настройка; таблица прав по CN (D4); журнал и метрика расхождений. Проверка: юнит-тесты таблицы прав и состояний; сборка образа CI. _google-auth 0.4.2: `INTERNAL_TLS_PORT` (:8443), `INTERNAL_IDENTITY` по группам ручек, права D4, метрика `internal_identity_total`; 18 тестов, в т.ч. на реальном mTLS-сервере._
+- [x] 4.2 wallet-telegram: `net/tls` для вызовов к google-auth на служебном порту, метка образа. Проверка: сборка; привязка и команда бота на test. _wallet-telegram 0.2.4: `TLS_CERT/KEY/CA` для вызовов `/internal/*`; метка `org.wallet.mtls=1` у обоих образов._
+- [x] 4.3 Включить observe на test для служебного порта. Проверка: бот работает как раньше, в журнале google-auth каждый запрос бота с CN `wallet-telegram`, расхождений нет. _На test с 2026-11-21 16:20 (`WALLET_AUTH_MTLS_CLIENTS=wallet-telegram`, `WALLET_AUTH_IDENTITY=observe`): запросы бота идут на :8443, в журнале `group=telegram finding=ok cn=wallet-telegram`, расхождений нет; привязка, трата текстом и токен работают. Критерий суток наблюдения для 4.4 ещё не пройден._
 - [ ] 4.4 После критерия перехода включить enforce-tls, затем enforce. Проверка: `curl` без сертификата на служебный порт — рукопожатие не проходит; `/internal/telegram/token` с сертификатом wallet-api — 403; бот работает.
 
 ## 5. Цепочка обмена: wallet-ai → google-auth → wallet-mcp → google-auth
