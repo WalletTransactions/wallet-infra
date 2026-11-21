@@ -513,6 +513,10 @@ WALLET_AUTH_MTLS_CLIENTS=wallet-telegram          # wallet-telegram, wallet-mcp,
 WALLET_AUTH_IDENTITY=observe                      # или observe,telegram=enforce
 ```
 
+**Перед первым включением** на хосте один раз: `bash infra/env/mtls-init.sh <env>` — создаёт
+CA контура. Jenkins монтирует секреты только на чтение и создать CA не может; без него
+выкат останавливается с этой подсказкой, сервисы не затрагиваются (откат на прежний тег).
+
 Что происходит: google-auth получает второй служебный слушатель `:8443` (mTLS, клиентский
 сертификат обязателен) рядом с обычным `:8081`; названные клиенты получают свой сертификат
 и `AUTH_INTERNAL_URL=https://google-auth-internal:8443`. Остальные клиенты остаются на
