@@ -37,7 +37,7 @@ WALLET_AUTH_MTLS_ALL=(wallet-telegram wallet-mcp wallet-ai)
 # Имена сертификатов: сервисы контура и клиент Prometheus. wallet-docs выпускается
 # всегда (дёшево), используется только при включённом профиле docs.
 # shellcheck disable=SC2034  # используют скрипты, подключающие lib.sh
-WALLET_MTLS_NAMES=(google-auth wallet-api wallet-report wallet-ai wallet-gateway
+WALLET_MTLS_NAMES=(google-auth wallet-api wallet-report wallet-ai wallet-gateway db
     wallet-telegram wallet-mcp wallet-docs wallet-web prometheus)
 WALLET_MTLS_DAYS="${WALLET_MTLS_DAYS:-30}"
 

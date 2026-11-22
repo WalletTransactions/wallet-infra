@@ -174,6 +174,11 @@ Postgres каждого контура опубликован **только н�
 | prod | `127.0.0.1:15555` |
 | test | `127.0.0.1:15432` |
 
+**TLS.** При `WALLET_INTERNAL_MTLS=true` в контуре (на test включается так же, как остальной mTLS) Postgres
+принимает **только TLS**: в DBeaver — SSL → режим `require` (проверка сервера не нужна, клиентский сертификат
+не нужен), в psql — `sslmode=require`; без TLS — `pg_hba.conf rejects connection`. Режим выключен — как раньше.
+Подробности — `infra/env/README.md`, «TLS до Postgres и Redis».
+
 Логин и пароль — роль нужной базы из `db.env` контура
 (`~/.config/wallet-secrets/<env>/db.env`). Для «просто посмотреть» лучше
 app-роль или `wallet_reader` (только SELECT); мигратор видит и может менять

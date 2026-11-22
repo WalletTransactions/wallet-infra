@@ -61,6 +61,15 @@ for env in prod test; do
         export "${prefix}_REDIS_USER=$(sed -n 's/^REDIS_USER=//p' "$exp_env" | tail -n1)"
         export "${prefix}_REDIS_PASSWORD=$(sed -n 's/^REDIS_PASSWORD=//p' "$exp_env" | tail -n1)"
     fi
+    # TLS до Postgres (add-internal-mtls, задача 9.2): при WALLET_INTERNAL_MTLS=true в развёрнутом описании
+    # контура сервер принимает только TLS (pg_hba hostnossl reject). Экспортёры и Grafana (оба на lib/pq и
+    # pgx без режима prefer) подключаются с require — шифрование без проверки сервера; выключен — disable.
+    mtls_mode="$(sed -n 's/^WALLET_INTERNAL_MTLS=//p' "$STATE_ROOT/$env/infra/infra/env/$env.env" 2>/dev/null | tail -n1)"
+    if [[ "$mtls_mode" == "true" ]]; then
+        export "${prefix}_PG_SSLMODE=require"
+    else
+        export "${prefix}_PG_SSLMODE=disable"
+    fi
     if ! docker network inspect "wallet-$env" >/dev/null 2>&1; then
         echo "==> создаю сеть wallet-$env"
         docker network create "wallet-$env" >/dev/null

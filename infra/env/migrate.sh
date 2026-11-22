@@ -57,11 +57,21 @@ if [[ "$db_exists" != "1" ]]; then
     docker exec "$db_container" sh /docker-entrypoint-initdb.d/init-db.sh >/dev/null
 fi
 
-database_url="postgres://${MIGRATOR_POSTGRES_USER}:${MIGRATOR_POSTGRES_PASSWORD}@db:5432/${db_name}?sslmode=disable"
+# TLS до Postgres (add-internal-mtls, задача 9.2): при WALLET_INTERNAL_MTLS=true сервер принимает только
+# TLS (pg_hba hostnossl reject), поэтому мигратор проверяет сервер по CA контура; иначе — как раньше.
+ssl_query="sslmode=disable"
+tls_args=()
+if env_mtls_enabled; then
+    db_ca="${WALLET_GENERATED_DIR:-$STATE_DIR/generated}/mtls/db/ca.pem"
+    [[ -s "$db_ca" ]] || die "режим mTLS включён, а CA контура для Postgres нет: $db_ca (сначала infra/env/up.sh $ENV_NAME)"
+    ssl_query="sslmode=verify-full&sslrootcert=/tls/ca.pem"
+    tls_args=(-v "$db_ca:/tls/ca.pem:ro")
+fi
+database_url="postgres://${MIGRATOR_POSTGRES_USER}:${MIGRATOR_POSTGRES_PASSWORD}@db:5432/${db_name}?${ssl_query}"
 
 if [[ "$base" == "perf" ]]; then
     echo "==> [$ENV_NAME] $base: migrate $* (infra/db/migrations/perf)"
-    docker run --rm --network "wallet-$ENV_NAME" \
+    docker run --rm --network "wallet-$ENV_NAME" "${tls_args[@]}" \
         -v "$COMPOSE_DIR/infra/db/migrations/perf:/migrations:ro" \
         docker.io/migrate/migrate:v4.18.3 -path=/migrations -database "$database_url" "$@"
     # perf_reader (под ней Grafana читает историю прогонов) миграция perf
@@ -94,7 +104,7 @@ echo "==> [$ENV_NAME] $base: migrate $* (миграции из $image)"
 docker volume create "$volume" >/dev/null
 # --user 0: рантайм-образы работают под appuser, а корень нового тома — root.
 docker run --rm --user 0 --entrypoint cp -v "$volume:/dst" "$image" -r /migrations/. /dst/
-docker run --rm --network "wallet-$ENV_NAME" -v "$volume:/migrations:ro" \
+docker run --rm --network "wallet-$ENV_NAME" "${tls_args[@]}" -v "$volume:/migrations:ro" \
     docker.io/migrate/migrate:v4.18.3 -path=/migrations -database "$database_url" "$@"
 
 # wallet_reader (под ней ходит wallet-report) создаёт миграция wallet-api с
