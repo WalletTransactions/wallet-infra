@@ -140,6 +140,11 @@ openssl genrsa -out "$S/jwt_signing_key.pem" 2048 && chmod 644 "$S/jwt_signing_k
   потока (`AI_STREAM_MAX`, `AI_STREAM_MAX_PER_USER`, `AI_STREAM_PING_SECS`,
   у гейтвея `GATEWAY_STREAMS_MAX`) имеют рабочие умолчания и в compose не
   выведены.
+- `LEDGER_ICON_UPLOAD` (wallet-api, change optional-icon-upload) — тоже из
+  `infra/env/<env>.env`, не из `wallet-api.env`: `on` — приём своих иконок
+  пользователей, `off` (по умолчанию) — `403 icon_upload_disabled` на загрузку,
+  строки `icon` в push отбрасываются. Клиенты узнают значение из
+  `capabilities.icon_upload` в pull. Смена — новый тег wallet-infra и `up.sh`.
 
 Адреса других сервисов, `DATABASE_URL`, `HOST`/`PORT` из `.env.example`
 можно не трогать: `compose.yaml` переопределяет их адресами сети контура.

@@ -214,6 +214,10 @@ services:
       PORT: 8082
       AUTH_SERVICE_URL: http://google-auth:8080
       DATABASE_URL: postgresql://${WALLET_POSTGRES_USER}:${WALLET_POSTGRES_PASSWORD}@db:5432/${WALLET_POSTGRES_DB}
+      # Приём своих иконок пользователей (wallet-api 0.4.11+, change optional-icon-upload):
+      # off — POST /sync/blobs не-админу 403, строки icon в push отбрасываются. Задаёт
+      # infra/env/<env>.env, по умолчанию off; старый wallet-api переменную игнорирует.
+      LEDGER_ICON_UPLOAD: ${LEDGER_ICON_UPLOAD-off}
     depends_on:
       google-auth:
         condition: service_healthy
