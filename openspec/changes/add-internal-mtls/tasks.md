@@ -31,7 +31,7 @@ Change объединяет бывший `add-redis-auth` (группа R, де�
 
 ### R4. Мониторинг
 
-- [ ] R4.1 `infra/monitoring/up.sh` и `compose.yaml`: учётные данные exporter из `redis/exporter.env` каждого контура с префиксом `PROD_`/`TEST_`, `REDIS_USER`, `REDIS_PASSWORD` в `redis-exporter-<env>`. Проверка: `docker compose config` монитор-стека без паролей в выводе; exporter запускается.
+- [x] R4.1 `infra/monitoring/up.sh` и `compose.yaml`: учётные данные exporter из `redis/exporter.env` каждого контура с префиксом `PROD_`/`TEST_`, `REDIS_USER`, `REDIS_PASSWORD` в `redis-exporter-<env>`. Проверка: `docker compose config` монитор-стека без паролей в выводе; exporter запускается. _2026-11-22: `up.sh` и `compose.yaml` в репозитории; `redis-exporter-test` и `-prod` запущены, `redis_up 1` у обоих, на test после `up.sh test` (ACL перечитан) отказов `NOPERM` нет. В репозитории пароли не хранятся (пустые по умолчанию); `docker compose config` с экспортированными `up.sh` переменными пароль exporter показывает — он передаётся через `environment` контейнера, как и пароли postgres-exporter._
 - [x] R4.2 Список команд пользователя `exporter`: прогнать exporter с ACL и дочитать `ACL LOG`. Проверка: цель `redis-exporter` up по test, `redis_connected_clients` и `redis_memory_used_bytes` обновляются, отказов ACL нет; список зафиксирован в design.md. _Настоящий redis_exporter v1.62.0 под пользователем `exporter` на test (v0.5.0-rc.16): `redis_up 1`, `redis_connected_clients`, `redis_memory_used_bytes`, `redis_db_keys` обновляются, `ACL LOG` и журнал exporter без отказов. Первый прогон показал нехватку `client|setname` и `latency|histogram` — добавлены; список зафиксирован в design.md (RD3). Стек мониторинга как целое не запускался (остановлен), поэтому проверка — одиночным контейнером exporter в сети test._
 
 ### R5. Включение на test
@@ -44,9 +44,9 @@ Change объединяет бывший `add-redis-auth` (группа R, де�
 
 ### R6. Откат и отказ на test
 
-- [ ] R6.1 Откат: вернуть прежний ACL-файл с `default` и `ACL LOAD`, затем снова выключить. Проверка: сервисы работают в обоих состояниях, токены не пропали.
-- [ ] R6.2 Неверный пароль google-auth на старте. Проверка: процесс завершается, в журнале причина без значения пароля, healthcheck контейнера не проходит.
-- [ ] R6.3 Выключение `default` при живом клиенте на `default` (имитация: соединение `redis-cli` без пароля до шага 5). Проверка: выкат сообщает о соединении `user=default` и не выключает его.
+- [x] R6.1 Откат: вернуть прежний ACL-файл с `default` и `ACL LOAD`, затем снова выключить. Проверка: сервисы работают в обоих состояниях, токены не пропали. _2026-11-22 на test: `on`→`compat` (`ACL LOAD`) и обратно; `DBSIZE` 125 в обоих состояниях, соединение google-auth не оборвалось, `default` в compat отвечает без пароля, в `on` — `WRONGPASS … user is disabled`._
+- [x] R6.2 Неверный пароль google-auth на старте. Проверка: процесс завершается, в журнале причина без значения пароля, healthcheck контейнера не проходит. _Одноразовый контейнер google-auth 0.4.5-rc.1 в сети test с окружением рабочего и неверным `REDIS_PASSWORD`: код выхода 1, в журнале `Redis: AUTH не прошёл … WRONGPASS`, пароля нет; процесс не живёт — healthcheck (curl в тот же процесс) не может пройти._
+- [x] R6.3 Выключение `default` при живом клиенте на `default` (имитация: соединение `redis-cli` без пароля до шага 5). Проверка: выкат сообщает о соединении `user=default` и не выключает его. _`env_redis_apply` в режиме `on` проверяет `CLIENT LIST`: с открытым `redis-cli BLPOP` под `default` — отказ «1 соединение(й) под user=default», `default` остаётся включён; после закрытия соединения — применяется._
 
 ### R7. Prod
 

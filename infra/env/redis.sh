@@ -106,6 +106,15 @@ env_redis_admin() {
 # оборвал бы соединение google-auth (переподключения у него нет). Режим выключен — ничего не делает.
 env_redis_apply() {
     env_redis_enabled || return 0
+    # Шаг 5 (default off): живое соединение под default оборвётся после ACL LOAD — не выключаем, пока оно есть
+    # (задача R6.3). Каждый клиент должен быть переведён на своего пользователя на шаге 3.
+    if [[ "$(env_redis_mode)" == "on" ]]; then
+        local stale
+        stale="$(env_redis_admin CLIENT LIST | grep -c ' user=default ' || true)"
+        if [[ "$stale" -gt 0 ]]; then
+            die "redis: $stale соединение(й) под user=default — default не выключен; переведите клиентов на своих пользователей (WALLET_REDIS_AUTH=compat, шаг 3) и повторите"
+        fi
+    fi
     env_redis_admin ACL LOAD >/dev/null || die "redis: ACL LOAD не прошёл (см. журнал Redis; прежний ACL остаётся в силе)"
     echo "==> [$ENV_NAME] redis: ACL применён (режим $(env_redis_mode))"
 }
