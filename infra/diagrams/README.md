@@ -1,169 +1,165 @@
 # diagrams
 
-PlantUML-схемы взаимодействия сервисов WalletTransaction
-(google-auth, wallet-api, wallet-report, wallet-web, wallet-gateway —
-`wallet-bff` в этом составе больше нет, см. README wallet-web, "Куда делся
-wallet-bff").
+PlantUML-схемы взаимодействия сервисов WalletTransaction (контур
+`wallet-<env>` из `compose.yaml`: google-auth, wallet-api, wallet-report,
+wallet-ai, wallet-mcp, wallet-docs, wallet-telegram, wallet-gateway,
+wallet-web, tls-proxy, db, redis — `wallet-bff` в этом составе больше нет,
+см. README wallet-web, "Куда делся wallet-bff"). Номера портов на схемах —
+порты внутри контейнеров; на хосте гейтвей — 8090 (prod) / 8091 (test),
+TLS-прокси — 8443 / 8444.
 
 - **`sequence.puml`** — детальный сиквенс: анонимный визит (SPA сама дёргает
-  `GET /auth/me`, чтобы узнать, залогинен ли пользователь) → логин через
-  Google (включая ветку с отложенным подтверждением регистрации нового
-  пользователя, `POST /auth/google/confirm-signup`, и запись обоих токенов —
-  access И refresh — в Redis с TTL) → redirect на `/` и SPA рисует дашборд
-  по тому же `/auth/me` (теперь дополнительно проверяет отзыв access-токена
-  в Redis) → защищённый API-вызов через JWT-гейт гейтвея (создание
-  кошелька) → обновление access-токена через `POST /auth/refresh` (атомарная
-  ротация refresh-токена через Redis `GETDEL`, вместо прежнего
-  `DELETE ... RETURNING` в Postgres) → список пользователей `/admin/users`
-  (только `Role::Admin`, теперь обычный JSON API — SPA сама рисует таблицу,
-  см. `app.js::renderAdmin()`) → логаут (`POST /auth/logout` теперь напрямую
-  с фронтенда, отзывает ОБА токена в Redis) → принудительный logout другого
-  пользователя администратором (`POST /admin/users/:id/logout` — отзывает
-  ВСЕ его активные токены через обратный индекс в Redis, не только один
-  токен из cookie, как обычный `/auth/logout`). Явно показывает, что
-  `redirect_uri` указывает на гейтвей, а не на auth-service напрямую, как
-  гейтвей прозрачно проксирует сам OAuth callback (открытый префикс
-  `/auth/*` — см. README google-auth, "Через гейтвей, не напрямую"), и что
-  мгновенный отзыв access-токена через Redis действует только для запросов
-  В auth-сервис — не для `/api/*` через гейтвей (см. README google-auth,
-  "Мгновенный logout — только в auth-сервисе").
-- **`components.puml`** — статическая схема компонентов: кто с кем говорит,
-  какие префиксы гейтвей роутит куда (три бекенда — `wallet-report`
-  проверяется ДО общего `/api/*`, иначе тот перехватил бы первым) и где
-  именно у него JWT-гейт, как устроена проверка токена через JWKS (RS256,
-  без общего секрета — см. README auth-сервиса/wallet-api/wallet-gateway,
-  "Как убрали общий секрет"), три роли (user/support/admin), что у
-  wallet-api — СВОЯ, отдельная от auth-сервиса Postgres-база с полным
-  доменом леджера/синка (`ledger`/`ledger_member`/`ledger_invite`/
-  `app_user`/`device` + данные операций — не только демо-`wallets`, см.
-  README wallet-api, "Своя БД"), что `wallet-report` (CQRS-lite) читает ТУ
-  ЖЕ базу отдельным read-only соединением ролью `wallet_reader`, что у
-  auth-сервиса Postgres остался только под `users`, а ОБА токена (access и
-  refresh) — в Redis с AOF-персистентностью + volume (см. note у `REDIS` на
-  диаграмме про разную цену потери данных для каждого из них) плюс обратный
-  индекс "все токены этого user_id" (нужен только для принудительного
-  logout администратором), и что wallet-web (nginx) — единственный
-  компонент, который вообще не трогает JWT (это делает браузерный `app.js`,
-  а не сам nginx) — включая приём `/join/<token>` через тот же SPA-фолбэк
-  `try_files`.
+  `GET /auth/me`, затем `GET /auth/methods`, чтобы решить, какие способы
+  входа показать) → вход через Google (`redirect_uri` строится из
+  `X-Forwarded-Host`/`Host` и сверяется с `ALLOWED_REDIRECT_URIS`; ветка с
+  отложенным подтверждением регистрации, `POST /auth/google/confirm-signup`;
+  ветка, где Google забирает неподтверждённый парольный аккаунт) **или** вход
+  по паролю (`POST /auth/login`: только при `X-Forwarded-Proto: https`,
+  счётчики неудач в Redis, `429`, единый `401`) → запись обоих токенов в Redis
+  (хэши, TTL, индексы на пользователя) → SPA по `/auth/me` открывает «Отчёты»
+  → защищённый вызов через JWT-гейт гейтвея с проверкой `aud`
+  (`GET /api/reports/balance` в wallet-report; прежнего демо `/api/wallets`
+  больше нет) → обновление access-токена через `POST /auth/refresh`
+  (атомарная ротация через Redis `GETDEL`) → `/admin/users` (только
+  `Role::Admin`, JSON с `active_sessions`) → логаут (`POST /auth/logout`,
+  отзывает ОБА токена) → принудительный logout другого пользователя
+  администратором (`POST /admin/users/:id/logout` — ВСЕ его токены через
+  обратный индекс в Redis). Явно показывает, что мгновенный отзыв
+  access-токена через Redis действует только для запросов В google-auth —
+  остальные сервисы проверяют JWT по JWKS и узнают об отзыве по `exp`.
+- **`components.puml`** — статическая схема компонентов контура: кто с кем
+  говорит, таблица префиксов гейтвея (`/api/reports/`, `/api/ai/`,
+  `/api/docs/`, `/api/mcp/` — раньше общего `/api/`; `aud` JWT-гейта на
+  каждом маршруте, `/api/mcp/` без гейта), tls-proxy перед гейтвеем, проверка
+  токена через JWKS (RS256, без общего секрета), служебный порт google-auth
+  `/internal/*` в сети `auth-internal` (бот, wallet-mcp, wallet-ai — мимо
+  гейтвея), чат wallet-ai через wallet-mcp, wallet-mcp → wallet-report и
+  wallet-docs по JWT обмена, LM Studio на хосте (и необязательный Anthropic),
+  ОДИН Postgres контура (`pgvector/pgvector:pg16`) с базой и ролью на сервис
+  (`wallet-report` читает базу wallet ролью `wallet_reader`), Redis только у
+  google-auth (AOF + volume; ключи токенов, MCP-токенов, кода связывания
+  Telegram, счётчиков неудачных входов; ACL на test) и wallet-web (nginx),
+  который сам JWT не трогает — включая приём `/join/<token>` через
+  SPA-фолбэк `try_files`.
+- **`internal-mtls-components.puml`** — взаимный TLS внутри контура (change
+  `add-internal-mtls`, ещё открыт): CA контура и `mtls.sh` (сертификаты
+  сервисов на 30 дней, read-only монтирование), что идёт по mTLS (вызовы между
+  сервисами, гейтвей → апстримы, служебный порт google-auth `:8443` с
+  проверкой идентичности, `:8442`/`:8443` для Prometheus), что остаётся HTTP
+  (входной порт гейтвея — граница, публичный порт google-auth), Postgres
+  (`ssl=on`, `hostnossl reject`, `verify-full`, без клиентского сертификата
+  роли) и Redis (ACL без TLS — исключение). Отдельной note — состояние test и
+  prod по `infra/env/<env>.env`.
 - **`invite-sequence.puml`** — детальный сиквенс приглашения в леджер по
-  одноразовой ссылке (Фаза 6, `org/docs/TODO_mobile_sync.md`): владелец
-  создаёт ссылку (`POST /api/ledger/invites` — сырой токен отдаётся ровно
-  один раз, в БД только его `sha256`) → приглашённый открывает `/join/
-  <token>` без сессии (SPA-фолбэк `nginx`, токен уходит в `localStorage` —
-  google-auth ПОСЛЕ входа всегда возвращает на `/`, не на исходный путь) →
-  вход через Google (тот же флоу, что `sequence.puml`, шаг 2, — не
-  дублируется подробно) → возврат на `/`, `POST /api/invites/accept` с
-  тремя исходами (`200` принято, `409` у принимающего уже есть свой леджер
-  — ссылка НЕ расходуется, `410` истекла/отозвана/использована) → отзыв
-  ссылки владельцем. Явно показывает, почему приём одноразовый (`UPDATE ...
-  WHERE used_at IS NULL ...` в одной транзакции с созданием `app_user`/
-  `ledger_member`) и почему в ответе на создание нет поля `link` — только
-  `token` (ссылку строит сам браузер из своего `location.origin`).
+  одноразовой ссылке: владелец создаёт ссылку (`POST /api/ledger/invites` —
+  сырой токен отдаётся ровно один раз, в БД только его `sha256`) →
+  приглашённый открывает `/join/<token>` без сессии (SPA-фолбэк `nginx`, токен
+  уходит в `localStorage`) → вход через Google (возврат всегда на `/`) или по
+  паролю на том же экране (без перезагрузки) → `POST /api/invites/accept` с
+  исходами `200`, `410` и `409` с `ledger_empty`: пустой собственный леджер
+  можно заменить повтором с `replace_empty_ledger: true` (после
+  `confirm`), непустой — нельзя, ссылка при `409` НЕ расходуется → отзыв
+  ссылки владельцем. Почему приём одноразовый (`UPDATE ... WHERE used_at IS
+  NULL ...` в одной транзакции с созданием `app_user`/`ledger_member`) и
+  почему в ответе на создание нет поля `link`.
 - **`sync-sequence.puml`** — офлайн-first синк Android ↔ wallet-api через
-  wallet-gateway: сбор `dirty`-строк по 9 синхронизируемым таблицам и
-  отдельная заливка содержимого иконок (`POST /sync/blobs`, контент-
-  адресуемо по SHA-256) → push НЕ одним запросом, а циклом порций (`Sync
-  Engine.chunkIntoPortions`, ≤1000 строк на порцию, `MAX_PUSH_BATCH_ROWS`)
-  → на КАЖДУЮ порцию свой `POST /sync/push` — идемпотентность по своему
-  `batch_id`, вся `changes` этой порции одной Postgres-транзакцией
-  (`sync_repo.cpp::push_batch`), один `seq` на порцию, применение таблиц
-  порции в фиксированном порядке по FK-зависимостям (`kApplyOrder`), три
-  исхода конфликта (дубль имени счёта с `existing_uuid`,
-  `missing_reference`, прочий дубль без авто-разрешения — любой из них
-  прерывает отправку ОСТАЛЬНЫХ порций этого цикла синка, уже отправленные
-  остаются применёнными) → `GET /sync/pull` постранично (два независимых
-  курсора — `ledger`/`reference`, `limit=500`, страница не разрезает
-  группу с одинаковым `seq`), применение страницы в той же порядке
-  зависимостей на клиенте (`TABLE_ORDER` в `SyncEngine.java`). Отдельными
-  note на диаграмме — где именно живёт «отправлено/получено» по обе
-  стороны (`dirty` — своя колонка на каждой из 9 таблиц клиента,
-  `sync_push_batch` — единственная таблица-идемпотент на сервере, свой
-  batch_id на КАЖДУЮ порцию, `ledgerSyncSeq`/`referenceSyncSeq` — не
-  таблица вовсе, а два ключа в Android `SharedPreferences`, ось pull,
-  независимая от `dirty`), и что порции режутся по факту (по границе
-  таблицы И по лимиту строк одновременно, не жёстко «одна порция — одна
-  таблица») — лимит клиентский, не протокольный, сервер о порциях вообще
-  не знает.
+  wallet-gateway: 12 синхронизируемых таблиц (вкл. `counterparty`,
+  `account_debt`, `account_asset`, `currency_conversion`, `operation_link`) →
+  иконки по умолчанию только скачиваются, «свои» уходят с иконкой-заместителем
+  (`server-managed-icons`); загрузка своих иконок — только при настройке на
+  телефоне и `capabilities.icon_upload` от сервера (`LEDGER_ICON_UPLOAD`,
+  `optional-icon-upload`): `HEAD`/`POST /sync/blobs` и ОТДЕЛЬНЫЙ push-батч на
+  иконку, отказ `403 icon_upload_disabled` / `icons_rejected` выключает
+  настройку → push циклом порций (≤1000 строк, `MAX_PUSH_BATCH_ROWS`, свой
+  `batch_id` и транзакция на порцию, один `seq`, `kApplyOrder`), исходы
+  `409`/`400` → `GET /sync/pull` постранично с `ledger_id`: курсоры запроса —
+  подтверждение устройства, `reset`/`reset_reason` (`ahead`, `purged`) с
+  вычисткой отсутствующего на клиенте, `capabilities` → чистка tombstone по
+  горизонту подтверждений активных устройств (`purge-synced-tombstones`).
+  Отдельными note — где живёт «отправлено/получено» по обе стороны и что
+  чистка `sync_push_batch` по-прежнему не реализована.
 - **`logging.puml`** — конвейер логов, а не запрос/ответ между сервисами:
-  кто пишет (google-auth/wallet-api/wallet-gateway — одна строка JSON на
-  событие через `applog`, в контейнерах на stdout, т.к. `LOG_DIR` в
-  compose не задан; db/redis/wallet-web(nginx) — свой формат, не JSON) →
-  podman (`conmon`) кладёт stdout/stderr контейнеров в `journald`
-  podman-machine → `fluent-bit` вычитывает журнал (`INPUT systemd`,
-  `_COMM=conmon`) и цепочкой фильтров: whitelist по `CONTAINER_NAME` (режет
-  чужие compose-стеки этой podman-machine и сам стек логирования — иначе
-  `opensearch*`/`dashboards-init`/`fluent-bit` лили бы сами себя в индекс),
-  переименование полей, разбор JSON (`app_json`, успешно только для трёх
-  прикладных сервисов — у остальных запись остаётся как есть), чистка
-  служебных полей journald/conmon → `OUTPUT opensearch` в индекс
-  `wallet-logs-YYYY.MM.DD` → OpenSearch Dashboards читает их для Discover
-  (index pattern `wallet-logs*`/saved search, разово импортированы
-  `dashboards-init`). Отдельной note — ротация: дневные индексы, ISM-
-  политика `wallet-logs-retention` удаляет их через 14 дней (ставит
-  `opensearch-init`, см. `infra/logging/opensearch-init.sh`),
-  и что нативный (не в контейнере) запуск сервиса на Windows пишет в
-  `./logs/*.log` собственной ротацией `applog` — мимо этого конвейера
-  целиком.
+  прикладные C++ сервисы пишут одну строку JSON на событие в stdout, у
+  каждого сервиса контура `logging.driver: journald` → `dockerd` кладёт
+  строки в `journald` хоста → `fluent-bit` (отдельный проект
+  `wallet-logging`, по умолчанию не запущен, курсор журнала в томе)
+  вычитывает журнал (`_COMM=dockerd`), whitelist по `CONTAINER_NAME`
+  (`wallet-(prod|test)-…`; wallet-docs и tls-proxy в него не входят), поле
+  `env`, разбор JSON (`app_json`), чистка служебных полей → индекс
+  `wallet-logs-YYYY.MM.DD` в OpenSearch → Dashboards (Discover). Ротация —
+  ISM-политика `wallet-logs-retention`, 14 дней.
 
-### Telegram-бот и LM Studio (2026-09-29)
+### Telegram-бот и ИИ
 
-План — `org/docs/TODO_telegram_bot.md`, сервис — `wallet-telegram`.
+Сервис — `wallet-telegram`; ИИ — `wallet-ai` (задания), инструменты чтения —
+`wallet-mcp`.
 
 - **`telegram-components.puml`** — компоненты: `wallet-telegram` (цикл
-  поллинга, `Bot`, `Sessions`, служебный HTTP), Telegram Bot API (только
-  исходящий HTTPS, long polling), google-auth (выдача кода связывания,
-  `/internal/telegram/exchange` напрямую, мимо гейтвея, refresh/logout),
-  wallet-report (команды чтения с Bearer пользователя), своя база
-  `wallet_telegram`, Redis с кодом связывания, мониторинг. Пунктиром — план:
-  `/sync/push` в wallet-api (шаг 6) и LM Studio на хосте через
-  `host.docker.internal:1234` (фазы 3–4).
+  поллинга, `Bot`, `Sessions`, ожидающие задания ИИ, служебный HTTP),
+  Telegram Bot API (только исходящий HTTPS, long polling), google-auth
+  (код связывания, `/internal/telegram/*` на служебном порту по mTLS, мимо
+  гейтвея), wallet-report (команды чтения токеном бота), wallet-api
+  (`/sync/push` — трата по кнопке), wallet-ai (задания `parse_expense` и
+  `chat`, SSE, выбор провайдера) → wallet-mcp → wallet-report, LM Studio на
+  хосте и необязательный Anthropic — только из wallet-ai, своя база
+  `telegram`, Redis с кодом связывания, мониторинг.
 - **`telegram-link-sequence.puml`** — подключение: «Подключить Telegram» в
-  вебе → одноразовый код в Redis → ссылка и QR → `/start <код>` в Telegram →
-  обмен кода на device-сессию `platform=telegram` → зашифрованный refresh в
-  `tg_link`; веб опрашивает `/auth/devices` до появления сессии. Отключение
-  из веба (revoke, бот узнаёт на следующем refresh) и `/unlink` из Telegram.
+  настройках веба → одноразовый код в Redis → ссылка и QR → `/start <код>` в
+  Telegram → обмен кода на связку `tg_user_id → user_id` в google-auth (без
+  токенов у бота) → настройки в `tg_link`; веб опрашивает
+  `/auth/telegram/links` до появления связки. Отключение из веба (бот узнаёт
+  по `404` на следующем запросе токена) и `/unlink` из Telegram.
 - **`telegram-commands-sequence.puml`** — цикл `getUpdates` с offset в базе
-  и пропуском «ядовитого» апдейта; `/wallets` целиком: кеш access, refresh с
-  ротацией и немедленной записью нового токена, 401 → удаление связки,
-  повтор после 401 от wallet-report, «сегодня» в поясе пользователя; что
-  происходит с сообщениями, пока бот лежит (24 ч в Telegram).
-- **`telegram-llm-sequence.puml`** — **план, в коде ещё нет**: маршрутизация
-  (команда → строгий формат → LLM), трата свободным текстом через
-  structured output LM Studio с карточкой подтверждения и записью только по
-  кнопке, агентный цикл с read-only инструментами, тот же реестр как MCP.
-  MCP с 2026-10-31 — отдельный сервис `wallet-mcp`, см. следующую схему.
+  и пропуском «ядовитого» апдейта (ожидание сокращается до 1 с, пока есть
+  задания ИИ); `/wallets` целиком: короткий токен бота
+  (`/internal/telegram/token`, 5 мин, кеш), `404` → удаление связки, один
+  повтор после `401` от wallet-report, справочник счетов без системных и
+  долговых, «сегодня» в поясе пользователя; что происходит с сообщениями,
+  пока бот лежит (24 ч в Telegram).
+- **`telegram-llm-sequence.puml`** — реализованный путь ИИ в боте:
+  маршрутизация текста (команда → строгий формат → вопрос → трата свободным
+  текстом), задание `parse_expense` с опросом и карточкой подтверждения,
+  запись `/sync/push` только по кнопке (UUIDv5 `batch_id`, «Проверить ещё
+  раз» при неизвестном исходе), задание `chat` с обменом токена, агентным
+  циклом wallet-ai через инструменты wallet-mcp и показом ответа по мере
+  генерации (SSE `delta`/`tool`/`done`), выбор провайдера `/ai` с согласием
+  на облачный.
 - **`mcp-oauth-sequence.puml`** — **план, после v1**: MCP-клиент (Claude
   Code) получает JWT по OAuth 2.1 и задаёт вопрос `wallet-mcp`. Шаги:
   обнаружение по `401` + `WWW-Authenticate` (RFC 9728/8414) → регистрация
   публичного клиента (DCR или Client ID Metadata Document) → Authorization
   Code + PKCE в браузере с экраном согласия google-auth → обмен кода на access
   (`aud` `wallet-mcp`, 15 мин) и ротируемый refresh → `tools/call`, где
-  `wallet-mcp` меняет клиентский JWT на свой для wallet-report (RFC 8693, без
-  token passthrough) → обновление по refresh и реакция на повторное
-  использование → отзыв из «Моих устройств». В v1 вместо шагов 1–4 — персональный
-  токен `wmcp_…` (OpenSpec `google-auth/add-mcp-personal-tokens`).
+  `wallet-mcp` меняет клиентский JWT на свой для wallet-report (RFC 8693 —
+  эта часть уже работает, `/internal/token/exchange`) → обновление по
+  refresh и реакция на повторное использование → отзыв из «Моих устройств».
+  Сейчас вместо шагов 1–4 — персональный токен `wmcp_…`. Предусловие HTTPS
+  уже есть на test (TLS-вход).
 - **`token-exchange-sequence.puml`** — обмен токена RFC 8693
-  (`POST /internal/token/exchange`, google-auth `add-token-exchange`, wallet-mcp
-  `add-jwt-access`, в test с 2026-11-04): чат `wallet-ai` меняет токен
-  пользователя на JWT для `wallet-mcp` (`mcp:read`, `act` wallet-ai) →
+  (`POST /internal/token/exchange` на служебном порту google-auth по mTLS):
+  чат `wallet-ai` (из веба `POST /api/ai/jobs` или из Telegram-бота) меняет
+  токен пользователя на JWT для `wallet-mcp` (`mcp:read`, `act` wallet-ai) →
   `wallet-mcp` проверяет его локально по JWKS и меняет на JWT для
-  `wallet-report` (`reports:read`, `act` wallet-mcp → wallet-ai) → данные.
-  Отказы (`invalid_client`, `invalid_target`, `invalid_grant`, `401` у
-  wallet-mcp с причиной в журнале), кеш, который не продлевает входящий JWT,
-  и для сравнения путь персонального токена `wmcp_…`. Вызовы из `wallet-ai` —
-  план (`add-chat-agent`).
+  `wallet-report` (`reports:read`) или `wallet-docs` (`docs:ask`, инструмент
+  `ask_docs`) → данные. Отказы (`invalid_client`, `403` проверки
+  идентичности, `invalid_target`, `invalid_grant`, `401` у wallet-mcp с
+  причиной в журнале), кеш, который не продлевает входящий JWT, и для
+  сравнения путь персонального токена `wmcp_…`.
+
+### TLS на входе и mTLS внутри контура
 
 - **`tls-ingress-components.puml`** — TLS на входе контура (change
   `add-tls-ingress`): `tls-proxy` (Caddy) перед гейтвеем и три источника
   сертификата — CA Caddy (`internal`), файлы (`files`) и Let's Encrypt от
   `tailscaled` хоста (`tailscale`), какой сайт Caddyfile за какой режим
-  отвечает, и что из TLS-входа берёт google-auth (`redirect_uri`, `Secure`
-  cookie, вход по паролю только по https).
+  отвечает, что из TLS-входа берёт google-auth (`redirect_uri`, `Secure`
+  cookie, вход по паролю только по https) и где включено (test — да, prod —
+  нет).
 - **`tls-ingress-login-sequence.puml`** — вход через Google за TLS-прокси с
   двумя ветками рукопожатия по SNI: имя `.ts.net` (сертификат от
   `tailscaled`) и IP / nip.io (CA Caddy), плюс режим `files`; какие
   `redirect_uri` должны быть в Google Cloud Console для обеих веток.
+- **`internal-mtls-components.puml`** — см. выше, в общем списке.
 
 ## Как отрендерить
 
@@ -183,6 +179,13 @@ podman run --rm -v "$(pwd)":/data -w /data docker.io/plantuml/plantuml \
     -tpng components.puml sequence.puml sync-sequence.puml \
     logging.puml invite-sequence.puml
 ```
+Сейчас (Linux-хост, docker) — все схемы разом, SVG с именами из `@startuml`,
+которые ждёт `index.html`:
+```bash
+docker run --rm -v "$PWD":/data -w /data docker.io/plantuml/plantuml -tsvg *.puml
+```
+Только проверка синтаксиса, без картинок — `-checkonly` вместо `-tsvg`.
+
 Диаграммы выше ~4096px высотой (сиквенсы `sequence.puml`/`invite-sequence.puml`)
 обрезаются PNG-рендерером по умолчанию — добавить `-e PLANTUML_LIMIT_SIZE=10000`
 переменной окружения контейнера, если нужен рендер целиком, не только для
@@ -274,3 +277,45 @@ journald podman-machine → fluent-bit → OpenSearch → Dashboards. При
 настоящий рендерер (см. "Как отрендерить" выше), не только вычитаны на
 синтаксис — мелких PlantUML-опечаток, которые предыдущие проходы могли не
 заметить, не нашлось.
+
+**2026-11-22 — сверка всех схем с `compose.yaml`, `compose.*mtls*.yaml`,
+`infra/env/*` и архивом OpenSpec-изменений всех репозиториев** (по
+запросу «актуализируй диаграммы»):
+
+- **`components.puml`** — добавлены wallet-docs, wallet-telegram, tls-proxy,
+  служебный порт google-auth и сеть `auth-internal`, маршрут `/api/docs/`,
+  `aud` на маршрутах гейтвея, связи чата (wallet-ai → wallet-mcp →
+  wallet-report/wallet-docs), Anthropic как необязательный провайдер. Postgres
+  показан как ОДИН инстанс контура с базой на сервис (раньше — две
+  «отдельные» базы), убрано демо `/api/wallets`/`wallets`, порт wallet-web —
+  80, ключи Redis дополнены (`mcp_token`, `tg_link_code`, `authfail:*`) и
+  ACL.
+- **`internal-mtls-components.puml`** — новая схема (change
+  `add-internal-mtls`, состояние test/prod на эту дату).
+- **`sequence.puml`** — вход по паролю и `GET /auth/methods`, выбор
+  `redirect_uri` по заголовкам, `aud` у JWT-гейта; защищённый вызов теперь
+  `GET /api/reports/balance` (демо-кошельков больше нет).
+- **`sync-sequence.puml`** — таблицы синка (12), иконки только с сервера и
+  необязательная загрузка своих (`HEAD`/`POST /sync/blobs`, отдельный
+  батч, `icons_rejected`, `capabilities.icon_upload`), `ledger_id` в pull,
+  подтверждения устройств, `reset_reason`, чистка tombstone, ответ `400
+  invalid_row`.
+- **`invite-sequence.puml`** — вход по паролю на экране приглашения,
+  `409 ledger_empty` и `replace_empty_ledger`.
+- **`logging.puml`** — podman/conmon → docker/dockerd, проекты
+  `wallet-prod`/`wallet-test` и `wallet-logging`, whitelist из
+  `fluent-bit.conf`, поле `env`, курсор journald.
+- **Telegram** — `telegram-llm-sequence.puml` переписана из плана в
+  реализованный путь через задания wallet-ai; в `telegram-components.puml`
+  бот больше не ходит к LM Studio сам, `/sync/push` реализован; в
+  link/commands — токен бота с `aud` wallet-ai и `ai:use`, служебный порт по
+  mTLS, справочник без `kind=wallet`.
+- **`token-exchange-sequence.puml`** — чат больше не план, ветка
+  `ask_docs` (aud `wallet-docs`), отказ проверки идентичности.
+- **`mcp-oauth-sequence.puml`** (по-прежнему план) — предусловие HTTPS
+  отмечено как выполненное на test, обмен на шаге 5 — через
+  `/internal/token/exchange`.
+- **`tls-ingress-components.puml`** — wallet-docs в списке апстримов,
+  состояние test/prod, HTTP-участок Caddy → гейтвей при mTLS.
+- **`index.html`** — добавлены обе TLS-схемы (раньше их там не было) и
+  схема mTLS.

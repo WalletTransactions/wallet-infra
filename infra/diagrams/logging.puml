@@ -1,41 +1,43 @@
 @startuml wallet-transaction-logging
-title WalletTransaction — конвейер логов: кто пишет, куда, как забирает OpenSearch
+title WalletTransaction — конвейер логов: кто пишет, куда, как забирает OpenSearch\n(стек логов — отдельный compose-проект wallet-logging, по умолчанию не запущен)
 
 skinparam componentStyle rectangle
 skinparam wrapWidth 220
 
-node "Контейнеры podman (compose-проект \"servers\")" as Containers {
-  [google-auth\nwallet-api\nwallet-report\nwallet-gateway\n\n— C++ (applog), одна строка JSON\nна событие: level/msg/service/\ntrace_id/route/user_id/ts\n— stdout (LOG_DIR не задан в\ncompose → default_log_dir()\nна Linux == "" → stdout)] as APPS
+node "Контейнеры контуров wallet-prod / wallet-test\n(docker, logging.driver: journald у каждого сервиса)" as Containers {
+  [google-auth, wallet-api, wallet-report,\nwallet-gateway, wallet-telegram,\nwallet-ai, wallet-mcp\n\n— C++ (wallet-common util/log), одна\nстрока JSON на событие: level/msg/\nservice/trace_id/route/user_id/ts\n— stdout] as APPS
   [db (Postgres)\nredis\n\n— свой формат, НЕ JSON] as INFRA
   [wallet-web (nginx)\n\n— access/error лог nginx,\nНЕ JSON] as WEB
+  [wallet-docs, tls-proxy\n\n— тоже journald, но НЕ в whitelist\nfluent-bit: в OpenSearch не попадают\n(только journalctl / docker logs)] as OUTSIDE
 }
 
-node "podman-machine (WSL VM)\nхост-процессы" as Host {
-  [conmon\n\n— по одному процессу на контейнер,\npodman отдаёт ему stdout/stderr] as CONMON
+node "Хост (Linux)" as Host {
+  [dockerd\n\n— пишет запись journald на КАЖДУЮ\nстроку stdout/stderr контейнера\n(_COMM=dockerd, поле CONTAINER_NAME)] as DOCKERD
   database "journald\n(/var/log/journal)" as JOURNALD
 }
 
-node "fluent-bit\n(fluent/fluent-bit:3.1)" as FB {
-  [INPUT: systemd\nPath /var/log/journal\nSystemd_Filter _COMM=conmon\nRead_From_Tail On] as FB_IN
-  [FILTER: grep\nCONTAINER_NAME\n\n— режет и чужие compose-стеки этой\n  podman-machine, и сам стек логов\n  (opensearch*/dashboards-init/\n  fluent-bit), иначе они лили бы\n  сюда же и сами себя] as FB_GREP
-  [FILTER: modify\nRename CONTAINER_NAME->container_name\nRename MESSAGE->message] as FB_RENAME
-  [FILTER: parser (app_json)\nKey_Name message, Reserve_Data On,\nPreserve_Key Off\n\n— парсится: google-auth/wallet-api/\n  wallet-gateway (ts -> @timestamp,\n  сырой message удаляется)\n— не парсится (не JSON): db/redis/\n  wallet-web — запись не трогается,\n  message остаётся как есть] as FB_PARSE
-  [FILTER: modify\nRemove_wildcard _\n(+ CODE_FILE/CODE_LINE/CODE_FUNC/\nCONTAINER_ID(_FULL)/\nSYSLOG_IDENTIFIER/PRIORITY)\n\n— чистит служебные поля journald/conmon] as FB_CLEAN
+node "fluent-bit\n(fluent/fluent-bit:3.1, проект wallet-logging)" as FB {
+  [INPUT: systemd\nPath /var/log/journal\nSystemd_Filter _COMM=dockerd\nDB /fluent-bit/state/journal.db (курсор)\nRead_From_Tail On (только первый запуск)] as FB_IN
+  component "FILTER: grep\nCONTAINER_NAME ^wallet-(prod|test)[-_]\n(db|redis|google-auth|wallet-api|\nwallet-report|wallet-web|wallet-gateway|\nwallet-telegram|wallet-ai|wallet-mcp)[-_]\n\n— режет чужие compose-стеки хоста" as FB_GREP
+  [FILTER: modify\nRename CONTAINER_NAME->container_name\nRename MESSAGE->message\n+ env prod|test по префиксу контейнера] as FB_RENAME
+  [FILTER: parser (app_json)\nKey_Name message, Reserve_Data On,\nPreserve_Key Off\n\n— парсится: прикладные C++ сервисы\n  (ts -> @timestamp, сырой message удаляется)\n— не JSON (db/redis/wallet-web) —\n  запись не трогается] as FB_PARSE
+  [FILTER: modify\nRemove_wildcard _\n(+ CODE_FILE/CODE_LINE/CODE_FUNC/\nCONTAINER_ID(_FULL)/\nSYSLOG_IDENTIFIER/PRIORITY)] as FB_CLEAN
   [OUTPUT: opensearch\nHost opensearch:9200, tls Off\nLogstash_Format On,\nLogstash_Prefix wallet-logs\nSuppress_Type_Name On] as FB_OUT
 }
 
-database "OpenSearch\n(single-node,\nsecurity отключен)" as OS {
-  [wallet-logs-YYYY.MM.DD\n(дневные индексы, 0 реплик,\nISM wallet-logs-retention:\nудаление через 14 дней)] as IDX
+database "OpenSearch\n(single-node, security отключен,\nхост :19200 → 9200)" as OS {
+  [wallet-logs-YYYY.MM.DD\n(дневные индексы,\nISM wallet-logs-retention:\nудаление через 14 дней)] as IDX
 }
 
-node "OpenSearch Dashboards" as OSD {
-  [Discover\n(index pattern + saved search,\nимпортированы один раз\ndashboards-init из\nsaved_objects.ndjson)] as DISC
+node "OpenSearch Dashboards\n(хост :15601)" as OSD {
+  [Discover\n(index pattern wallet-logs* + saved search,\nимпортированы dashboards-init из\nsaved_objects.ndjson; фильтр env:prod / env:test)] as DISC
 }
 
-APPS --> CONMON
-INFRA --> CONMON
-WEB --> CONMON
-CONMON --> JOURNALD : пишет unit-записи\n(CONTAINER_NAME, MESSAGE, ...)
+APPS --> DOCKERD
+INFRA --> DOCKERD
+WEB --> DOCKERD
+OUTSIDE --> DOCKERD
+DOCKERD --> JOURNALD : CONTAINER_NAME, MESSAGE, ...
 
 JOURNALD --> FB_IN : volume ro:\n/var/log/journal,\n/run/log/journal,\n/etc/machine-id
 
@@ -49,48 +51,38 @@ FB_OUT --> IDX : HTTP :9200 (bulk)
 
 OSD --> IDX : читает при поиске\n/ визуализации
 
-note bottom of APPS
-  На Windows без контейнеров (нативный
-  запуск сервиса, install-service.bat) —
-  LOG_DIR по умолчанию "logs", файлы
-  ./logs/YYYY-MM-DD-<service>.log,
-  ротация по дате прямо в applog
-  (log.cpp). Этот путь ВНЕ данного
-  конвейера — journald/fluent-bit его
-  не видят вообще.
+note bottom of FB_IN
+  Курсор journald лежит в томе fluent-bit-state: стек логов
+  по умолчанию не запущен, а при следующем старте fluent-bit
+  дочитывает журнал с места остановки, а не теряет логи за
+  время простоя. Read_From_Tail действует только при самом
+  первом запуске (пока DB нет) — чтобы не залить весь
+  многомесячный журнал хоста.
 end note
 
 note right of FB_PARSE
-  Разбор по одному правилу (Key_Name
-  message) на все контейнеры разом —
-  fluent-bit не различает "это app,
-  а это infra" заранее. Если формат
-  не JSON, парсер просто не срабатывает
-  и запись проходит дальше без изменений
-  (Reserve_Data/Preserve_Key тут ни при
-  чём — они про то, что делать, когда
-  разбор УДАЛСЯ).
+  Разбор по одному правилу (Key_Name message) на все
+  контейнеры разом — fluent-bit не различает "app" и
+  "infra" заранее. Если формат не JSON, парсер просто не
+  срабатывает, запись проходит дальше без изменений.
 end note
 
 note bottom of IDX
-  Ротация — по дню: fluent-bit пишет в
-  wallet-logs-%Y.%m.%d (UTC), шаблон
-  индекса и ISM-политику
-  wallet-logs-retention (delete через
-  14 дней) ставит opensearch-init
-  (infra/logging/opensearch-init.sh)
-  до старта fluent-bit.
+  Ротация — по дню: wallet-logs-%Y.%m.%d (UTC). Шаблон
+  индекса и ISM-политику wallet-logs-retention (delete через
+  14 дней) ставит opensearch-init (infra/logging/
+  opensearch-init.sh) до старта fluent-bit. prod и test — в
+  одном индексе, различаются полем env.
 end note
 
 note left of FB_GREP
-  Whitelist, а не "все контейнеры этого
-  проекта": сам стек логирования
-  (opensearch, opensearch-dashboards,
-  dashboards-init, fluent-bit) тоже
-  подпадает под префикс "servers-" —
-  без этого фильтра лил бы свою
-  внутреннюю болтовню (и сам fluent-bit)
-  в wallet-logs.
+  Префикс — имя compose-проекта контура (name: wallet-${WALLET_ENV}
+  в wallet-infra/compose.yaml). Переименовали проект — правьте и
+  регэксп, иначе фильтр молча дропнет все логи. Стеки логов и
+  метрик — отдельные проекты (wallet-logging, wallet-monitoring),
+  под префикс не подпадают и journald-драйвер не включают.
+  Новый сервис контура — дописать в whitelist (wallet-docs пока
+  не дописан).
 end note
 
 @enduml

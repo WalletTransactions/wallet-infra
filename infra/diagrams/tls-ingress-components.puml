@@ -18,7 +18,7 @@ package "Контур wallet-<env> (compose-проект, сеть wallet-<env>)
   database "том tls-data\nCA Caddy (root.crt, ключи)\nсертификаты IP / nip.io" as TLSDATA
   component "wallet-gateway\n:8090\n(на хосте только 127.0.0.1)\nTRUST_FORWARDED_HEADERS=true" as GW
   component "google-auth\n:8080\nCOOKIE_SECURE=true\nпароль только при X-Forwarded-Proto: https" as AUTH
-  component "wallet-web / api / report / ai / mcp" as REST
+  component "wallet-web / api / report / ai / mcp / docs" as REST
 }
 
 CLIENT --> CADDY : "HTTPS :8444\nSNI = имя из WALLET_TLS_HOST"
@@ -40,7 +40,7 @@ GEN ..> CADDY : "Caddyfile (ro)\nметка wallet.tls-config"
 
 CADDY --> GW : "plain HTTP\nX-Forwarded-Proto: https\nX-Forwarded-Host"
 GW --> AUTH : "/auth/* (без JWT-гейта)\nX-Forwarded-Proto / Host\nпрозрачно"
-GW --> REST : "/ , /api/*"
+GW --> REST : "/ , /api/*, /sync/*\n(при WALLET_INTERNAL_MTLS — по mTLS)"
 
 note bottom of AUTH
   Что google-auth берёт из TLS-входа:
@@ -49,6 +49,14 @@ note bottom of AUTH
   • 192.168.* переписывается в <ip>.nip.io (Google не принимает голый IP)
   • cookie с Secure; вход по паролю — только через https
     (или явное ALLOW_INSECURE_AUTH=true)
+end note
+
+note bottom of GW
+  Состояние по infra/env/<env>.env на 2026-11-22: test — WALLET_TLS=true,
+  режим tailscale, :8444 (с 2026-11-20); prod — TLS-вход выключен
+  (WALLET_TLS_PORT=8443 задан, WALLET_TLS закомментирован).
+  Участок Caddy → гейтвей остаётся HTTP и при mTLS внутри контура:
+  входной порт гейтвея — граница контура (add-internal-mtls, D9).
 end note
 
 note right of CLIENT
