@@ -17,7 +17,7 @@
 - [x] 3.1 Описать профиль, три режима сертификата (с таблицей «какой выбрать»), список адресов, выгрузку CA и настройки входа в `infra/env/README.md` и корневом `README.md` (включая шаг «добавить https `redirect_uri` с TLS-портом в `ALLOWED_REDIRECT_URIS` и Google Cloud Console» для каждого имени, а для входа по LAN-IP — имя `<IP>.nip.io` в `WALLET_TLS_HOST`, установку корня CA на устройства, включение MagicDNS и HTTPS Certificates в tailnet, риск сокета `tailscaled` и альтернативу `tailscale cert` по таймеру + `files` с перезапуском прокси); проверить, что команды из README выполняются как записаны
 - [ ] 3.2 Включить TLS в test, пройти из браузера: вход через Google по имени `.ts.net` и по LAN-IP (колбэк на `<IP>.nip.io` без ошибки сертификата), cookie с `Secure`, `curl http://<хост>:8091` с другой машины не отвечает; затем prod по порядку из `design.md`
 
-- [ ] 3.3 Проверить `https://` с Android (перенесено из android-wallet `add-password-login`, задача 1.2): на Huawei P20 Pro установить корень CA контура (из `export-ca.sh`) как пользовательский сертификат, указать `https://`-адрес в «Адрес сервера» и выполнить вход и синхронизацию; без установленного корня запрос завершается ошибкой сертификата. Приложение уже доверяет пользовательским CA (`network_security_config`, android-wallet 1.0.165+)
+- [x] 3.3 Проверить `https://` с Android (перенесено из android-wallet `add-password-login`, задача 1.2): на Huawei P20 Pro установить корень CA контура (из `export-ca.sh`) как пользовательский сертификат, указать `https://`-адрес в «Адрес сервера» и выполнить вход и синхронизацию; без установленного корня запрос завершается ошибкой сертификата. Приложение уже доверяет пользовательским CA (`network_security_config`, android-wallet 1.0.165+)
 
 ## Результаты проверки на test (2026-11-20, wallet-infra v0.5.0-rc.1)
 
@@ -28,7 +28,8 @@
 - В контейнерах `COOKIE_SECURE=true`, `TRUST_FORWARDED_HEADERS=true`; `ALLOW_INSECURE_AUTH=true` из секрета сохранён (`<env>.env` его не задаёт).
 - `GET /auth/google` выбирает `redirect_uri` `https://ivan-pc.<tailnet>.ts.net:8444/…` и `https://192.168.1.105.nip.io:8444/…` (по IP), с хоста напрямую — прежний `http://localhost:8091/…`.
 - Вход через Google из браузера по `https://ivan-pc.<tailnet>.ts.net:8444` прошёл (URI добавлены в Google Console); у cookie `session` и `refresh_token` в браузере стоят `Secure` и `HttpOnly`.
-- Остаются из 3.2 — prod (порт 8443, финальный тег) и 3.3 (Android).
+- Android (3.3, 2026-11-22, Huawei P20 Pro, qa-приложение 1.0.165): `export-ca.sh test` → `root.crt` (`CN=Caddy Local Authority - 2026 ECC Root`) установлен вручную как «Сертификат ЦС» («VPN и приложения»); «Адрес сервера» `https://<LAN-IP>:8444/`; вход по паролю прошёл, «Синхронизировать сейчас» завершилась (скачано справочники, счета и операции, отправлено 2 счёта). Проверка «без корня — ошибка сертификата» на телефоне не гонялась; на хосте `curl` без `--cacert` по IP/nip.io даёт ошибку сертификата (см. выше).
+- Остаётся из 3.2 — prod (порт 8443, финальный тег) и вход по `<IP>.nip.io` из браузера.
 
 ## Workflow follow-up
 
