@@ -5,10 +5,10 @@ skinparam componentStyle rectangle
 skinparam wrapWidth 220
 
 node "Контейнеры контуров wallet-prod / wallet-test\n(docker, logging.driver: journald у каждого сервиса)" as Containers {
-  [google-auth, wallet-api, wallet-report,\nwallet-gateway, wallet-telegram,\nwallet-ai, wallet-mcp\n\n— C++ (wallet-common util/log), одна\nстрока JSON на событие: level/msg/\nservice/trace_id/route/user_id/ts\n— stdout] as APPS
+  [google-auth, wallet-api, wallet-report,\nwallet-gateway, wallet-telegram,\nwallet-ai, wallet-mcp,\nwallet-docs (профиль docs)\n\n— C++ (wallet-common util/log), одна\nстрока JSON на событие: level/msg/\nservice/trace_id/route/user_id/ts\n— stdout] as APPS
   [db (Postgres)\nredis\n\n— свой формат, НЕ JSON] as INFRA
   [wallet-web (nginx)\n\n— access/error лог nginx,\nНЕ JSON] as WEB
-  [wallet-docs, tls-proxy\n\n— тоже journald, но НЕ в whitelist\nfluent-bit: в OpenSearch не попадают\n(только journalctl / docker logs)] as OUTSIDE
+  [tls-proxy (Caddy)\n\n— тоже journald, но НЕ в whitelist\nfluent-bit: в OpenSearch не попадают\n(только journalctl / docker logs)] as OUTSIDE
 }
 
 node "Хост (Linux)" as Host {
@@ -18,7 +18,7 @@ node "Хост (Linux)" as Host {
 
 node "fluent-bit\n(fluent/fluent-bit:3.1, проект wallet-logging)" as FB {
   [INPUT: systemd\nPath /var/log/journal\nSystemd_Filter _COMM=dockerd\nDB /fluent-bit/state/journal.db (курсор)\nRead_From_Tail On (только первый запуск)] as FB_IN
-  component "FILTER: grep\nCONTAINER_NAME ^wallet-(prod|test)[-_]\n(db|redis|google-auth|wallet-api|\nwallet-report|wallet-web|wallet-gateway|\nwallet-telegram|wallet-ai|wallet-mcp)[-_]\n\n— режет чужие compose-стеки хоста" as FB_GREP
+  component "FILTER: grep\nCONTAINER_NAME ^wallet-(prod|test)[-_]\n(db|redis|google-auth|wallet-api|\nwallet-report|wallet-web|wallet-gateway|\nwallet-telegram|wallet-ai|wallet-mcp|\nwallet-docs)[-_]\n\n— режет чужие compose-стеки хоста" as FB_GREP
   [FILTER: modify\nRename CONTAINER_NAME->container_name\nRename MESSAGE->message\n+ env prod|test по префиксу контейнера] as FB_RENAME
   [FILTER: parser (app_json)\nKey_Name message, Reserve_Data On,\nPreserve_Key Off\n\n— парсится: прикладные C++ сервисы\n  (ts -> @timestamp, сырой message удаляется)\n— не JSON (db/redis/wallet-web) —\n  запись не трогается] as FB_PARSE
   [FILTER: modify\nRemove_wildcard _\n(+ CODE_FILE/CODE_LINE/CODE_FUNC/\nCONTAINER_ID(_FULL)/\nSYSLOG_IDENTIFIER/PRIORITY)] as FB_CLEAN
@@ -81,8 +81,7 @@ note left of FB_GREP
   регэксп, иначе фильтр молча дропнет все логи. Стеки логов и
   метрик — отдельные проекты (wallet-logging, wallet-monitoring),
   под префикс не подпадают и journald-драйвер не включают.
-  Новый сервис контура — дописать в whitelist (wallet-docs пока
-  не дописан).
+  Новый сервис контура — дописать в whitelist.
 end note
 
 @enduml
