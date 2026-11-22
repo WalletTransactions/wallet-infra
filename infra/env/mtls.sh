@@ -291,8 +291,18 @@ _mtls_hash_value() {
 env_mtls_check_images() {
     _mtls_load_clients
     env_mtls_enabled || env_auth_mtls_enabled || return 0
-    local -a svcs=("$@") bad=()
+    local -a svcs=("$@") bad=() old=()
     local s tag image label name a
+    # Наименьшая версия каждого сервиса, в которой сервер сам слушает TLS (mTLS внутри контура,
+    # WALLET_INTERNAL_MTLS=true). Метка org.wallet.mtls=1 это не гарантирует: wallet-ai 0.2.4 её
+    # имел (клиентская часть), а порт слушал без TLS — healthcheck по https падал, и prod
+    # откатывался уже после пересоздания контейнеров. Версии — по первому тегу с серверной частью
+    # (git log -S INTERNAL_MTLS в репозитории сервиса). Новый сервис: добавить строку.
+    local -A min_server_tls=(
+        [google-auth]=0.4.4 [wallet-api]=0.4.9 [wallet-report]=0.3.4 [wallet-ai]=0.2.5
+        [wallet-gateway]=0.1.7 [wallet-web]=0.1.6 [wallet-telegram]=0.2.5 [wallet-mcp]=0.3.6
+        [wallet-docs]=0.1.5
+    )
     if [[ ${#svcs[@]} -eq 0 ]]; then
         if env_mtls_enabled; then
             for s in "${!WALLET_SERVICE_PORT[@]}"; do
@@ -339,12 +349,19 @@ env_mtls_check_images() {
             [[ "$(printf '%s\n%s\n' 0.4.3 "$base" | sort -V | head -n1)" == "0.4.3" ]] \
                 || die "закрытие /internal/* (WALLET_AUTH_INTERNAL_PUBLIC/PLAIN=false) требует google-auth не ниже 0.4.3, в контуре $tag"
         fi
+        if env_mtls_enabled && [[ -n "${min_server_tls[$s]:-}" ]]; then
+            local base_min="${tag%%-rc.*}"
+            [[ "$(printf '%s\n%s\n' "${min_server_tls[$s]}" "$base_min" | sort -V | head -n1)" == "${min_server_tls[$s]}" ]] \
+                || old+=("$s:$tag (нужна не ниже ${min_server_tls[$s]})")
+        fi
         image="$(image_of "$s" "$tag")"
         docker image inspect "$image" >/dev/null 2>&1 || docker pull -q "$image" >/dev/null \
             || die "mtls: не удалось скачать $image для проверки метки"
         label="$(docker image inspect --format '{{index .Config.Labels "org.wallet.mtls"}}' "$image" 2>/dev/null || true)"
         [[ "$label" == "1" ]] || bad+=("$s:$tag")
     done
+    [[ ${#old[@]} -eq 0 ]] \
+        || die "WALLET_INTERNAL_MTLS=true: у этих сервисов сервер ещё не слушает TLS (метка есть, но версия старее первой с серверной частью): ${old[*]}. Выкатите версии с серверной частью до включения режима, иначе healthcheck по https не пройдёт и контур откатится после пересоздания контейнеров"
     [[ ${#bad[@]} -eq 0 ]] \
         || die "mTLS включён, но образы без метки org.wallet.mtls=1 (собраны без поддержки): ${bad[*]}. Выкатите версии с поддержкой или выключите режим (design D8)"
 }
