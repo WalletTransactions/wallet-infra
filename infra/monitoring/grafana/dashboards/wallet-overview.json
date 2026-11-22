@@ -22,6 +22,21 @@
         ],
         "multi": false,
         "includeAll": false
+      },
+      {
+        "name": "service",
+        "label": "Сервис / контейнер",
+        "description": "Мультивыбор: HTTP-панели (job) и панели контейнеров cAdvisor (image) показывают только выбранные сервисы; All — все.",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": { "query": "label_values(http_requests_total{env=~\"$env\"}, job)", "refId": "service" },
+        "definition": "label_values(http_requests_total{env=~\"$env\"}, job)",
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": { "selected": true, "text": ["All"], "value": ["$__all"] }
       }
     ]
   },
@@ -34,7 +49,7 @@
       "gridPos": { "x": 0, "y": 1, "w": 12, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
-      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(http_requests_total{env=~\"$env\"}[1m])) by (job)", "legendFormat": "{{job}}" } ] },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(http_requests_total{env=~\"$env\", job=~\"$service\"}[1m])) by (job)", "legendFormat": "{{job}}" } ] },
 
     { "id": 3, "type": "timeseries", "title": "Errors/sec по сервису (4xx / 5xx)",
       "description": "Отдельно клиентские (4xx) и серверные (5xx) ошибки — sum(rate(http_requests_total{status=~\"4..\"|\"5..\"}[1m])) by (job, status_class).",
@@ -42,8 +57,8 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
       "targets": [
-        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "refId": "A", "expr": "sum(rate(http_requests_total{env=~\"$env\", status=~\"5..\"}[1m])) by (job)", "legendFormat": "{{job}} 5xx" },
-        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "refId": "B", "expr": "sum(rate(http_requests_total{env=~\"$env\", status=~\"4..\"}[1m])) by (job)", "legendFormat": "{{job}} 4xx" }
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "refId": "A", "expr": "sum(rate(http_requests_total{env=~\"$env\", job=~\"$service\", status=~\"5..\"}[1m])) by (job)", "legendFormat": "{{job}} 5xx" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "refId": "B", "expr": "sum(rate(http_requests_total{env=~\"$env\", job=~\"$service\", status=~\"4..\"}[1m])) by (job)", "legendFormat": "{{job}} 4xx" }
       ] },
 
     { "id": 4, "type": "timeseries", "title": "Latency p50 по сервису",
@@ -51,52 +66,52 @@
       "gridPos": { "x": 0, "y": 9, "w": 8, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
-      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.50, sum(rate(http_request_duration_seconds_bucket{env=~\"$env\"}[5m])) by (le, job))", "legendFormat": "{{job}}" } ] },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.50, sum(rate(http_request_duration_seconds_bucket{env=~\"$env\", job=~\"$service\"}[5m])) by (le, job))", "legendFormat": "{{job}}" } ] },
 
     { "id": 5, "type": "timeseries", "title": "Latency p95 по сервису",
       "description": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, job)).",
       "gridPos": { "x": 8, "y": 9, "w": 8, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
-      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{env=~\"$env\"}[5m])) by (le, job))", "legendFormat": "{{job}}" } ] },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{env=~\"$env\", job=~\"$service\"}[5m])) by (le, job))", "legendFormat": "{{job}}" } ] },
 
     { "id": 6, "type": "timeseries", "title": "Latency p99 по сервису",
       "description": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, job)).",
       "gridPos": { "x": 16, "y": 9, "w": 8, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
-      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{env=~\"$env\"}[5m])) by (le, job))", "legendFormat": "{{job}}" } ] },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{env=~\"$env\", job=~\"$service\"}[5m])) by (le, job))", "legendFormat": "{{job}}" } ] },
 
     { "id": 10, "type": "row", "title": "Контейнеры — CPU / RAM / сеть (cAdvisor)",
       "gridPos": { "x": 0, "y": 17, "w": 24, "h": 1 }, "collapsed": false, "panels": [] },
 
     { "id": 11, "type": "timeseries", "title": "CPU по контейнеру",
-      "description": "sum(rate(container_cpu_usage_seconds_total{name=~\".+\"}[1m])) by (image) * 100 — доля ядра в процентах (100 = одно ядро занято полностью). Группировка по image, не по name: с переходом Docker на containerd-snapshotter (2026-09-16, см. cadvisor в compose.yaml) cAdvisor видит контейнеры через containerd-обработчик, а не докеровский, и name там — это raw container id, а не человекочитаемое имя.",
+      "description": "sum(rate(container_cpu_usage_seconds_total{name=~\".+\", image=~\".*$service.*\"}[1m])) by (image) * 100 — доля ядра в процентах (100 = одно ядро занято полностью). Группировка по image, не по name: с переходом Docker на containerd-snapshotter (2026-09-16, см. cadvisor в compose.yaml) cAdvisor видит контейнеры через containerd-обработчик, а не докеровский, и name там — это raw container id, а не человекочитаемое имя.",
       "gridPos": { "x": 0, "y": 18, "w": 12, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "percent", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
-      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(container_cpu_usage_seconds_total{name=~\".+\"}[1m])) by (image) * 100", "legendFormat": "{{image}}" } ] },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(container_cpu_usage_seconds_total{name=~\".+\", image=~\".*$service.*\"}[1m])) by (image) * 100", "legendFormat": "{{image}}" } ] },
 
     { "id": 12, "type": "timeseries", "title": "RAM по контейнеру",
-      "description": "container_memory_usage_bytes{name=~\".+\"} — легенда по image, не по name (см. описание CPU-панели рядом, тот же довод про containerd-snapshotter).",
+      "description": "container_memory_usage_bytes{name=~\".+\", image=~\".*$service.*\"} — легенда по image, не по name (см. описание CPU-панели рядом, тот же довод про containerd-snapshotter).",
       "gridPos": { "x": 12, "y": 18, "w": 12, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "bytes", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
-      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "container_memory_usage_bytes{name=~\".+\"}", "legendFormat": "{{image}}" } ] },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "container_memory_usage_bytes{name=~\".+\", image=~\".*$service.*\"}", "legendFormat": "{{image}}" } ] },
 
     { "id": 13, "type": "timeseries", "title": "Сеть — приём, по контейнеру",
-      "description": "rate(container_network_receive_bytes_total{name=~\".+\"}[1m]) — ПУСТО на containerd-обработчике cAdvisor (проверено на исходниках google/cadvisor, ветка master, lib/container/containerd/handler.go, 2026-09-17) — и это НЕ временный баг/недоделка, чинится ТОЛЬКО сменой инструмента, не апгрейдом cAdvisor: containerd-обработчик вызывает common.RemoveNetMetrics(metrics, cntr.Labels[\"io.cri-containerd.kind\"] != \"sandbox\") — то есть сетевые метрики выпиливаются для ЛЮБОГО контейнера без CRI-лейбла \"sandbox\" (Kubernetes-специфичный лейбл pause-контейнера пода, общий netns на весь под). Обычные Docker-контейнеры (не CRI/K8s) такого лейбла не имеют и не могут иметь — значит remove=true всегда, на любой версии cAdvisor. CPU/RAM у containerd-обработчика работают нормально (см. инцидент 2026-09-16/17 и cadvisor в compose.yaml) — ограничение специфично именно для сети. Сеть хоста целиком — панель \"Сеть хоста\" ниже (node-exporter), она работает.",
+      "description": "rate(container_network_receive_bytes_total{name=~\".+\", image=~\".*$service.*\"}[1m]) — ПУСТО на containerd-обработчике cAdvisor (проверено на исходниках google/cadvisor, ветка master, lib/container/containerd/handler.go, 2026-09-17) — и это НЕ временный баг/недоделка, чинится ТОЛЬКО сменой инструмента, не апгрейдом cAdvisor: containerd-обработчик вызывает common.RemoveNetMetrics(metrics, cntr.Labels[\"io.cri-containerd.kind\"] != \"sandbox\") — то есть сетевые метрики выпиливаются для ЛЮБОГО контейнера без CRI-лейбла \"sandbox\" (Kubernetes-специфичный лейбл pause-контейнера пода, общий netns на весь под). Обычные Docker-контейнеры (не CRI/K8s) такого лейбла не имеют и не могут иметь — значит remove=true всегда, на любой версии cAdvisor. CPU/RAM у containerd-обработчика работают нормально (см. инцидент 2026-09-16/17 и cadvisor в compose.yaml) — ограничение специфично именно для сети. Сеть хоста целиком — панель \"Сеть хоста\" ниже (node-exporter), она работает.",
       "gridPos": { "x": 0, "y": 26, "w": 12, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "Bps", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
-      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "rate(container_network_receive_bytes_total{name=~\".+\"}[1m])", "legendFormat": "{{image}}" } ] },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "rate(container_network_receive_bytes_total{name=~\".+\", image=~\".*$service.*\"}[1m])", "legendFormat": "{{image}}" } ] },
 
     { "id": 14, "type": "timeseries", "title": "Сеть — передача, по контейнеру",
-      "description": "rate(container_network_transmit_bytes_total{name=~\".+\"}[1m]) — то же ограничение, что у панели \"Сеть — приём\" рядом (containerd-обработчик cAdvisor намеренно выпиливает сетевые метрики для не-CRI/не-Kubernetes контейнеров, не чинится апгрейдом — см. её описание).",
+      "description": "rate(container_network_transmit_bytes_total{name=~\".+\", image=~\".*$service.*\"}[1m]) — то же ограничение, что у панели \"Сеть — приём\" рядом (containerd-обработчик cAdvisor намеренно выпиливает сетевые метрики для не-CRI/не-Kubernetes контейнеров, не чинится апгрейдом — см. её описание).",
       "gridPos": { "x": 12, "y": 26, "w": 12, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "Bps", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
-      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "rate(container_network_transmit_bytes_total{name=~\".+\"}[1m])", "legendFormat": "{{image}}" } ] },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "rate(container_network_transmit_bytes_total{name=~\".+\", image=~\".*$service.*\"}[1m])", "legendFormat": "{{image}}" } ] },
 
     { "id": 20, "type": "row", "title": "Хост — podman-machine VM целиком (node-exporter)",
       "gridPos": { "x": 0, "y": 34, "w": 24, "h": 1 }, "collapsed": false, "panels": [] },
