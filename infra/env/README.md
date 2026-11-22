@@ -771,7 +771,7 @@ bash -c 'source infra/env/lib.sh; env_init test; env_compose ps'
 bash -c 'source infra/env/lib.sh; env_init test; env_compose logs -f wallet-api'
 
 docker exec -it wallet-test-db-1 sh -c 'psql -U "$POSTGRES_USER" -d wallet_api'
-docker exec -it wallet-test-redis-1 redis-cli   # с WALLET_REDIS_AUTH — под admin, см. «Redis: пароль и ACL»
+bash -c 'source infra/env/lib.sh; env_init test; env_redis_admin INFO keyspace'   # Redis с паролем: под admin, см. «Redis: пароль и ACL»
 ```
 
 Остановить контур, не теряя данных: `env_compose stop`. `env_compose down -v`
