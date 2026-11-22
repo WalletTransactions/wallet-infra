@@ -41,8 +41,7 @@
   соединения (keep-alive), чтобы handshake выполнялся не на каждый запрос.
 - Отдельным поздним этапом: TLS до Postgres и Redis.
 - **Вне объёма:** LM Studio на `host.docker.internal`, `api.telegram.org`, k8s и
-  service-mesh, пароль и ACL на Redis (отдельный change, **зависимость**: Redis
-  хранит access- и refresh-токены без пароля), отказ от `X-Service-Secret` в
+  service-mesh, TLS до Redis кроме группы 9 (пароль и ACL на Redis — часть R этого change), отказ от `X-Service-Secret` в
   пользу client assertion JWT (отдельный change после этого).
 
 ## Capabilities
@@ -80,7 +79,81 @@
 - **Compose**: сеть `auth-internal` и второй порт google-auth для `/internal/*`
   (google-auth, wallet-telegram, wallet-mcp, wallet-ai); основная сеть
   `wallet-<env>` остаётся для остального.
-- **Зависимости от других changes:** перед этим change — пароль и ACL на Redis
-  (отдельный change). После него — client assertion JWT вместо
+- **Зависимости от других changes:** перед mTLS в этом же change выполняется часть R — пароль и ACL на Redis. После него — client assertion JWT вместо
   `X-Service-Secret` (`TODO_service_auth_tls.md`, п. 1). Порядок работ внутри
   change определяется риском выдачи токенов и описан в design.md (D13).
+
+---
+
+## Часть R. Redis: пароль и ACL (бывший change `add-redis-auth`)
+
+Объединено с `add-internal-mtls` 2026-11-22: пароль Redis — шаг 1 порядка D13, и вести его отдельным change не имело смысла. Старое имя `add-redis-auth` остаётся в комментариях кода и скриптов (google-auth, `compose.redis-auth.yaml`, `infra/env/redis*.sh`) — это ссылка на эту часть; спека `redis-access-control` перенесена сюда же.
+
+### Why
+
+Redis контуров prod и test хранит активные access- и refresh-токены google-auth
+(refresh живёт 30 дней), персональные MCP-токены, одноразовые коды привязки
+Telegram и счётчики неудачных входов. Он запущен **без пароля**: порт наружу не
+публикуется, но любой контейнер сети `wallet-<env>` может прочитать эти токены,
+подделать их или отозвать чужие сессии. Это самая дешёвая из открытых дыр на
+критичном пути «токен по токену» и условие `add-internal-mtls` (design D13,
+шаг 1): без пароля Redis защита `/internal/*` и mTLS на нём не имеет смысла.
+
+### What Changes
+
+- Redis контура требует аутентификацию: ни одна команда без неё не выполняется.
+- Вместо одного общего пароля — **ACL-пользователи** с минимальными правами:
+  - `google-auth`: только команды и префиксы ключей, которые использует сервис
+    (`refresh_token:`, `access_token:`, `user_*_tokens:`, `mcp_token:`,
+    `tg_link_code:`, `authfail:`), без `FLUSHALL`, `CONFIG`, `KEYS`;
+  - `exporter`: только чтение статистики для redis-exporter;
+  - `health`: только `PING` для healthcheck контейнера;
+  - `admin`: все права, для оператора и `test-refresh.sh` (`FLUSHALL`).
+  Пользователь `default` выключается последним шагом выката.
+- Пароли генерируются скриптом, у каждого контура и пользователя свои, лежат в
+  секретах контура вне git (`~/.config/wallet-secrets/<env>/redis/`, по одному
+  файлу на потребителя, чтобы пароль не попадал в чужие контейнеры), в
+  ACL-файле контура хранятся только SHA-256-хеши.
+- google-auth получает необязательную настройку `REDIS_USERNAME` (сейчас клиент
+  умеет только `AUTH <пароль>`, то есть пользователя `default`); без неё
+  поведение прежнее.
+- Redis-exporter (стек метрик), healthcheck, `test-refresh.sh` и инструкции для
+  оператора (`docker exec … redis-cli`) переводятся на свои учётные данные.
+- Выкат без потери токенов и без остановки входа дольше одного рестарта
+  Redis: сначала версия google-auth с `REDIS_USERNAME`, затем Redis с ACL и
+  включённым `default` (совместимость), затем переключение клиентов, затем
+  выключение `default`. Откат на любом шаге — возврат прежнего ACL-файла.
+- **Вне объёма:** TLS до Redis (`add-internal-mtls`, группа 9), смена
+  значения токенов или формата ключей, пул соединений в google-auth,
+  Redis Sentinel или кластер.
+
+### Capabilities
+
+### New Capabilities
+- `redis-access-control`: аутентификация и права доступа к Redis контура —
+  пользователи и их права, хранение учётных данных, выключение
+  безымянного доступа, порядок включения без потери токенов, откат, доступ
+  оператора, доступность метрик и healthcheck.
+
+### Modified Capabilities
+
+(нет: требования существующих спек не меняются; `deployment-environments`
+«Изоляция секретов и токенов» остаётся в силе, новая спека её дополняет)
+
+### Impact
+
+- **wallet-infra**: `compose.yaml` (сервис `redis`: ACL-файл, healthcheck;
+  google-auth: переменные `REDIS_USERNAME`, `REDIS_PASSWORD`), новый скрипт
+  `infra/env/redis-auth.sh` (генерация секретов и ACL-файла, вызывается из
+  `up.sh`), `infra/env/test-refresh.sh` (`FLUSHALL` под `admin`),
+  `infra/monitoring/compose.yaml` и `up.sh` (учётные данные exporter), README
+  (корневой, `infra/env`, `infra/db`: команды для оператора).
+- **google-auth** (репозиторий google-auth): `redis_client.cpp` и `main.cpp`
+  (`AUTH <пользователь> <пароль>`), README, `.env.example`, юнит-тест.
+  Версия выкатывается **раньше** включения Redis-пароля.
+- **BuildPlatform (Jenkins)**: проверить, нет ли в джобах `redis-cli` без
+  пароля (бэкап, smoke); при наличии — править вне git, с резервной копией.
+- **Хост**: один рестарт контейнера Redis на контур (AOF и том сохраняются),
+  RAM и диск не растут, GPU не затрагивается.
+- **Порядок:** выполняется **до** `add-internal-mtls`; задача 1.2 того change
+  ссылается на этот.
