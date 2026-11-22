@@ -21,8 +21,9 @@ note over U, REPORT
   ПЛАН. В v1 (OpenSpec: google-auth/add-mcp-personal-tokens, wallet-mcp/add-mcp-read-tools)
   клиент держит персональный токен wmcp_… из веб-кабинета. OAuth 2.1 заменяет только то, КАК клиент
   получает свой токен. Задняя половина (обмен на короткий JWT для wallet-report) та же.
-  Предусловие: HTTPS на гейтвее (OAuth 2.1 требует TLS везде, кроме loopback-redirect) —
-  org/docs/TODO_service_auth_tls.md, п. 2.
+  Предусловие: HTTPS на входе (OAuth 2.1 требует TLS везде, кроме loopback-redirect). Есть с
+  add-tls-ingress: tls-proxy (Caddy) перед гейтвеем — на test включён (:8444), на prod пока нет;
+  <хост> ниже — адрес TLS-прокси. Состояние на 2026-11-22: эндпоинтов /auth/oauth/* в google-auth нет.
   Модель НИКОГДА не видит токены: они живут в транспорте и хранилище Claude Code, а в контекст модели
   попадают только имена инструментов, аргументы и результаты.
 end note
@@ -94,8 +95,8 @@ CC -> CC : модель выбирает инструмент:\nspending_by_cate
 CC -> GW : POST /api/mcp/  tools/call\nAuthorization: Bearer <access JWT>
 GW -> MCP : как есть
 MCP -> MCP : JWT по JWKS (кеш): подпись, iss, exp,\naud ∋ wallet-mcp, scope ∋ mcp:read
-MCP -> AUTH : POST /internal/mcp/token\ngrant_type=urn:ietf:params:oauth:grant-type:token-exchange\nsubject_token=<access JWT>   (RFC 8693; кеш до exp)
-AUTH -> REDIS : device-сессия ещё жива?
+MCP -> AUTH : POST /internal/token/exchange (служебный порт, mTLS)\nX-Service-Secret wallet-mcp, subject_token=<access JWT>,\naudience=wallet-report   (RFC 8693 — уже работает для JWT\nс aud wallet-mcp, см. token-exchange-sequence.puml; кеш до exp)
+AUTH -> REDIS : ПЛАН: device-сессия ещё жива?\n(сейчас обмен JWT сессию не проверяет)
 AUTH --> MCP : JWT aud=["wallet-report"], scope="reports:read",\nбез role, exp +300 с
 note right of MCP
   Token passthrough запрещён спекой MCP: клиентский JWT

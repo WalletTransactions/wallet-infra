@@ -1,0 +1,95 @@
+@startuml wallet-transaction-internal-mtls-components
+title WalletTransaction — взаимный TLS внутри контура (change add-internal-mtls, ещё открыт):\nCA контура, сертификаты сервисов, служебный порт google-auth, Postgres и Redis
+
+skinparam componentStyle rectangle
+skinparam wrapWidth 220
+left to right direction
+
+actor "Клиент\n(браузер / Android / Telegram-бот снаружи)" as CLIENT
+
+package "Хост" {
+  folder "~/.config/wallet-secrets/<env>/mtls-ca/\nca.key + ca.crt\n(создаёт mtls-init.sh ОДИН раз на хосте;\nключ CA в контейнеры не монтируется)" as CA
+  component "infra/env/mtls.sh\n(при каждом up.sh и выкате)\n\nECDSA P-256, 30 дней, CN = сервис,\nSAN = <сервис>, <сервис>-<env>;\nперевыпуск, когда прошла половина срока" as MTLSSH
+  folder "~/.local/state/wallet-envs/<env>/generated/mtls/<сервис>/\ntls.crt, tls.key, ca.pem\n→ /etc/wallet-tls (ro), только свой каталог;\nметка wallet.mtls-config = хэш сертификата" as CERTS
+  component "Prometheus\n(отдельный проект wallet-monitoring,\nклиентский сертификат prometheus)" as PROM
+}
+
+package "Контур wallet-<env>, сеть wallet-<env>" {
+  component "tls-proxy (Caddy)\n— вход по HTTPS, профиль tls" as TLS
+  component "wallet-gateway\n:8090 вход — ОБЫЧНЫЙ HTTP (D9, граница)\n:8443 служебный mTLS:\n/healthz, /metrics, /version" as GW
+  component "wallet-api :8082\nwallet-report :8084\nwallet-ai :8087\nwallet-mcp :8088\nwallet-docs :8089\nwallet-telegram :8086\nwallet-web (nginx) :80 ssl\n\n— сервер требует клиентский сертификат\n  (nginx без него — 400)\n— вызовы друг к другу по https\n  (INTERNAL_MTLS=true)" as SVC
+  component "google-auth\n:8080 публичный — HTTP (/auth/*, JWKS,\n/version); /healthz и /metrics на нём нет\n:8442 mTLS — /healthz, /metrics\n(SERVICE_MTLS_PORT)" as AUTHPUB
+  database "db (Postgres)\nssl=on, pg_hba.mtls.conf:\nhostssl … scram-sha-256,\nhostnossl … reject" as DB
+  database "redis\nACL + пароли (add-redis-auth),\nTLS НЕТ" as REDIS
+}
+
+package "Сеть auth-internal (internal: true, без выхода наружу)" {
+  component "google-auth — служебный порт /internal/*\nна алиасе google-auth-internal (не 0.0.0.0)\n:8443 mTLS — клиенты из WALLET_AUTH_MTLS_CLIENTS\n:8081 без TLS — до закрытия (WALLET_AUTH_INTERNAL_PLAIN)\n\nINTERNAL_IDENTITY: off | observe | enforce-tls | enforce\n(CN сертификата == actor, сервис из списка группы)" as AUTHINT
+  component "wallet-telegram\nwallet-mcp\nwallet-ai" as AUTHCLIENTS
+}
+
+CA --> MTLSSH : подпись
+MTLSSH --> CERTS : выпуск / перевыпуск
+CERTS ..> SVC : bind-mount ro
+CERTS ..> GW
+CERTS ..> AUTHPUB
+CERTS ..> DB : копия ключа 0600\n(entrypoint)
+
+CLIENT --> TLS : HTTPS
+CLIENT --> GW : HTTP (без TLS-входа)
+TLS --> GW : HTTP + X-Forwarded-*
+GW --> SVC : mTLS (пул постоянных\nсоединений, сертификат гейтвея)
+GW --> AUTHPUB : HTTP (/auth/*, /admin/*, JWKS)
+SVC --> AUTHPUB : JWKS по HTTP
+AUTHCLIENTS --> AUTHINT : mTLS :8443\n/internal/telegram/*,\n/internal/mcp/token,\n/internal/token/exchange
+SVC --> DB : у кого есть база:\nsslmode=verify-full,\nsslrootcert=ca.pem\n(клиентский сертификат\nроли пока НЕ требуется)
+AUTHPUB --> DB : verify-full
+AUTHPUB --> REDIS : RESP без TLS,\nпользователь google-auth (ACL)
+PROM --> SVC : https + сертификат prometheus
+PROM --> GW : :8443
+PROM --> AUTHPUB : :8442
+
+note top of AUTHINT
+  Порядок по риску выдачи токенов (D13): сначала служебный
+  порт google-auth (WALLET_AUTH_MTLS_CLIENTS +
+  compose.auth-mtls.yaml), потом весь контур
+  (WALLET_INTERNAL_MTLS=true + compose.mtls.yaml).
+  Закрытие остаточных путей:
+  WALLET_AUTH_INTERNAL_PUBLIC=false — /internal/* пропадает
+  с :8080 (404); WALLET_AUTH_INTERNAL_PLAIN=false — :8081 не
+  слушается. Откат — убрать строки и up.sh.
+end note
+
+note bottom of DB
+  Исключения (infra/env/README.md, «TLS до Postgres и Redis»):
+  • Postgres: clientcert=verify-ca для ролей сервисов не
+    включён — libpq берёт ключ только 0600 у владельца, а
+    ключи на bind-mount хостового пользователя (644).
+  • Redis: TLS нет — клиент google-auth свой, на голом
+    RESP-сокете; защита — пароль, ACL, default выключен,
+    порт наружу не публикуется.
+  • DBeaver/psql с хоста — sslmode=require и пароль роли.
+end note
+
+note bottom of GW
+  Защита от выката без поддержки (D8): при включённом
+  режиме up.sh и deploy.sh требуют у каждого образа метку
+  org.wallet.mtls=1 и тег не старее min_server_tls
+  (таблица в mtls.sh) — иначе отказ ДО любых изменений.
+  Smoke выката проверяет /version по https сертификатом
+  гейтвея.
+end note
+
+note as STATE
+  Состояние по infra/env/<env>.env на 2026-11-22:
+  test — WALLET_INTERNAL_MTLS=true, все три клиента служебного
+    порта на mTLS, INTERNAL_IDENTITY=enforce, :8081 и
+    /internal/* на :8080 закрыты, Redis ACL on.
+  prod — WALLET_INTERNAL_MTLS=true, три клиента на mTLS,
+    INTERNAL_IDENTITY=observe, остаточные пути открыты
+    (:8081 и /internal/* на :8080), Redis без ACL.
+  Change не закрыт: группа R (Redis на prod), 8.2, 9.x, 10.x,
+  11.x в tasks.md ещё не отмечены.
+end note
+
+@enduml

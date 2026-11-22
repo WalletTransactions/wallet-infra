@@ -1,18 +1,24 @@
 @startuml wallet-transaction-sequence
-title WalletTransaction — логин (в т.ч. подтверждение регистрации), SPA-дашборд,\nзащищённый API-вызов, обновление токена, admin-список, логаут
+title WalletTransaction — вход (Google с подтверждением регистрации или пароль), SPA-«Отчёты»,\nзащищённый API-вызов, обновление токена, admin-список, логаут
 
 skinparam sequenceMessageAlign center
 skinparam maxMessageSize 220
 
 actor "Браузер" as Browser
 participant "wallet-gateway\n:8090" as GW
-participant "wallet-web\n(nginx, статика)\n:8083" as WEB
-participant "google-auth\n(auth-service)\n:8080" as AUTH
-participant "wallet-api\n:8082" as API
+participant "wallet-web\n(nginx, статика)\n:80" as WEB
+participant "google-auth\n:8080" as AUTH
+participant "wallet-report\n:8084" as REPORT
 participant "Google\n(OAuth + JWKS)" as GOOGLE
-database "Postgres\n(auth-service)" as DB
-database "Redis\n(auth-service)" as REDIS
-database "Postgres\n(wallet-api,\nотдельная база)" as DB_WALLET
+database "Postgres\n(база auth)" as DB
+database "Redis\n(google-auth)" as REDIS
+database "Postgres\n(база wallet,\nроль wallet_reader)" as DB_WALLET
+
+note over Browser, GW
+  Перед гейтвеем может стоять tls-proxy (Caddy, на test — https :8444): он
+  добавляет X-Forwarded-Proto/Host, остальное на этой схеме не меняется.
+  Подробно — tls-ingress-login-sequence.puml.
+end note
 
 == 1. Первый визит — анонимно ==
 
@@ -23,45 +29,41 @@ GW --> Browser: 200 HTML
 
 Browser -> Browser: app.js: boot() — рисует "Загрузка…",\nсразу дёргает GET /auth/me
 Browser -> GW: GET /auth/me\n(credentials: 'include' — cookie "session" нет)
-GW -> AUTH: GET /auth/me (proxy — /auth/* не под JWT-гейтом,\nсаму проверку делает сам google-auth)
-AUTH -> AUTH: authenticate(req) — токена нет
+GW -> AUTH: GET /auth/me (proxy — /auth/* не под JWT-гейтом,\nпроверку делает сам google-auth)
 AUTH --> GW: 401 {"error":"unauthenticated"}
 GW --> Browser: 401
-Browser -> Browser: app.js: renderLogin() —\nкнопка "Войти через Google" (href="/auth/google")
+Browser -> GW: GET /auth/methods
+GW -> AUTH: proxy
+AUTH --> Browser: 200 {"methods":["password","google"],\n"registration":true|false}\n(по AUTH_METHODS / REGISTRATION)
+Browser -> Browser: app.js: экран входа по ответу —\nформа «Email»/«Пароль», «Создать аккаунт»,\nкнопка «Войти через Google» (href="/auth/google")
 
 note right of Browser
-  Тот же вход и та же кнопка — на /join/<token> (приём приглашения в
-  леджер, Фаза 6): renderJoinLogin() вместо renderLogin(), но
-  href="/auth/google" один в один, весь шаг 2 ниже не меняется вообще.
-  Разница только ДО (localStorage под токен приглашения) и ПОСЛЕ (приём
-  приглашения при возврате на "/") — см. infra/diagrams/invite-sequence.puml.
+  Тот же экран — на /join/<token> (приём приглашения в леджер):
+  токен ждёт в localStorage, весь шаг 2 ниже не меняется.
+  Разница только ДО и ПОСЛЕ — см. invite-sequence.puml.
 end note
 
-== 2. Логин через Google ==
+== 2а. Вход через Google ==
 
 Browser -> GW: GET /auth/google
 GW -> AUTH: GET /auth/google (proxy — префикс /auth/*\nна гейтвее НЕ защищён JWT-гейтом)
-AUTH -> AUTH: генерирует PKCE code_verifier\nи csrf state, кладёт в AppState.pending
+AUTH -> AUTH: PKCE code_verifier, csrf state;\nredirect_uri из X-Forwarded-Host/Host\n(192.168.x.y → <ip>.nip.io), только если он в\nALLOWED_REDIRECT_URIS, иначе REDIRECT_URL;\nвсё — в pending (память процесса)
 AUTH --> GW: 302 Location: accounts.google.com/o/oauth2/v2/auth?...
 GW --> Browser: 302
 Browser -> GOOGLE: GET /o/oauth2/v2/auth?...
 GOOGLE --> Browser: экран согласия -> 302 на redirect_uri
 
 note over Browser, GW
-  ""redirect_uri"" — фиксированный адрес, один раз зарегистрированный в
-  Google Cloud Console (""REDIRECT_URL"" в .env google-auth — указывает на
-  АДРЕС ГЕЙТВЕЯ, ""http://localhost:8090/auth/google/callback"", не на
-  google-auth напрямую, см. README google-auth, "Через гейтвей, не
-  напрямую"). Google возвращает браузер на гейтвей — тот прозрачно
-  проксирует ""/auth/google/callback"" на google-auth (открытый префикс
-  ""/auth/*"", без JWT-гейта): код обмена/верификации в google-auth про это
-  ничего не знает, ""redirect_uri"" для него просто строка.
+  ""redirect_uri"" указывает на АДРЕС ГЕЙТВЕЯ (или TLS-прокси), не на
+  google-auth напрямую, и должен быть зарегистрирован в Google Cloud
+  Console. Гейтвей прозрачно проксирует ""/auth/google/callback"" на
+  google-auth (открытый префикс ""/auth/*"").
 end note
 
 Browser -> GW: GET /auth/google/callback?code&state
 GW -> AUTH: GET /auth/google/callback?code&state\n(proxy — тот же открытый префикс /auth/*)
 activate AUTH
-AUTH -> GOOGLE: POST /token\n(code, client_secret, code_verifier)
+AUTH -> GOOGLE: POST /token\n(code, client_secret, code_verifier, тот же redirect_uri)
 GOOGLE --> AUTH: id_token, access_token
 AUTH -> GOOGLE: GET /oauth2/v3/certs (JWKS)
 GOOGLE --> AUTH: публичные RSA-ключи
@@ -70,130 +72,144 @@ AUTH -> AUTH: verify_rs256(id_token):\nподпись, issuer, audience, exp
 alt google_sub уже есть в users — обычный повторный вход
   AUTH -> DB: find_user_by_google_sub(sub)
   DB --> AUTH: UserRecord (id, role_id -> Role)
-  AUTH -> AUTH: get_or_create_user():\nроль НЕ пересчитывается для\nсуществующего пользователя
+  AUTH -> AUTH: обновить email/имя/аватар/время входа;\nроль НЕ пересчитывается
+else email_verified и email совпал с НЕподтверждённым\nпарольным аккаунтом без google_sub
+  AUTH -> DB: привязать google_sub, email_verified=true,\nудалить пароль, отозвать его сессии
 else google_sub не найден — новый пользователь, молча не создаём
-  AUTH -> AUTH: сохраняет проверенные claims\nв AppState.pending_signups\nпод одноразовым confirm_token
-  AUTH --> GW: 200 HTML "Подтвердите регистрацию"\n(своя server-rendered страница — форма\nPOST /auth/google/confirm-signup,\nскрытое поле token=confirm_token)
+  AUTH -> AUTH: сохраняет проверенные claims\nв pending_signups под одноразовым confirm_token
+  AUTH --> GW: 200 HTML "Аккаунт не найден"\n(форма POST /auth/google/confirm-signup,\nскрытое поле token=confirm_token)
   GW --> Browser: 200 HTML (форвардится как есть)
   deactivate AUTH
   Browser -> GW: POST /auth/google/confirm-signup?token=...
   GW -> AUTH: POST /auth/google/confirm-signup?token=... (proxy)
   activate AUTH
-  AUTH -> AUTH: забирает pending claims по token\n(одноразово — сразу удаляет из pending_signups)
+  AUTH -> AUTH: забирает pending claims по token (одноразово)
   AUTH -> AUTH: compute_role(email):\nADMIN_EMAILS/SUPPORT_EMAILS -> Admin/Support,\nиначе User (только для НОВОГО пользователя)
   AUTH -> DB: upsert_user(google_sub, email, name, role)
   DB --> AUTH: UserRecord (id, role_id -> Role)
 end
 
-AUTH -> AUTH: issue_tokens():\naccess = sign_rs256(private_key, kid)\nrefresh = random(32 байта)
-AUTH -> REDIS: SET refresh_token:hash(refresh) user_id\nEX REFRESH_TOKEN_TTL_SECS
-AUTH -> REDIS: SET access_token:hash(access) user_id\nEX ACCESS_TOKEN_TTL_SECS
-AUTH --> GW: 302 Location: "/"\nSet-Cookie session=(jwt) (Path=/)\nSet-Cookie refresh_token=... (Path=/auth)
-GW --> Browser: 302 (форвардится как есть,\ncookies уже применены браузером)
+AUTH -> AUTH: issue_tokens() для platform=web\n(новый device_id на каждый вход):\naccess = sign_rs256(private_key, kid),\naud [wallet-api, wallet-report, google-auth,\nwallet-ai, wallet-docs]; refresh = random(32 байта)
+AUTH -> REDIS: SET refresh_token:<sha256> {user, device, хэш access}\nEX REFRESH_TOKEN_TTL_SECS
+AUTH -> REDIS: SET access_token:<sha256> user_id\nEX ACCESS_TOKEN_TTL_SECS
+AUTH -> REDIS: SADD user_access_tokens:<id> / user_refresh_tokens:<id>
+AUTH --> GW: 302 Location: "/"\nSet-Cookie session=(jwt) (Path=/)\nSet-Cookie refresh_token=... (Path=/auth)\n(+ Secure при COOKIE_SECURE=true)
+GW --> Browser: 302 (cookies уже применены браузером)
+deactivate AUTH
+
+== 2б. Вход по паролю (вместо 2а, если включён password) ==
+
+Browser -> GW: POST /auth/login {"email","password"}
+GW -> AUTH: proxy (+ X-Forwarded-Proto от TLS-прокси)
+activate AUTH
+alt нет X-Forwarded-Proto: https и не ALLOW_INSECURE_AUTH
+  AUTH --> Browser: 403 {"error":"insecure_transport"} (тело не читается)
+else лимит неудач по email (5) или IP (30) за окно исчерпан
+  AUTH -> REDIS: GET authfail:email:… / authfail:ip:…
+  AUTH --> Browser: 429 + Retry-After (пароль не проверяется)
+else
+  AUTH -> DB: user_passwords: PBKDF2-HMAC-SHA256\n(соль, ≥600 000 итераций), сравнение за постоянное время
+  alt неверно / нет такого email / нет пароля
+    AUTH -> REDIS: INCR authfail:email:… и authfail:ip:… (EXPIRE окна)
+    AUTH --> Browser: 401 {"error":"неверный email или пароль"}\n(одинаковое время для всех причин)
+  else верно
+    AUTH -> REDIS: сброс счётчика по email;\nте же SET/SADD, что в конце 2а
+    AUTH --> Browser: 200 {"id","email","name","picture","role"}\n+ те же Set-Cookie session / refresh_token
+  end
+end
 deactivate AUTH
 
 note right of AUTH
-  Раньше здесь рендерилась своя HTML-страница успеха (с токеном для
-  curl-примеров) — теперь просто redirect на "/": SPA (wallet-web) сама
-  дёрнет GET /auth/me и покажет дашборд, см. шаг 3. Ветка "новый
-  пользователь" — единственное место, где реально создаётся UserRecord
-  (google.cpp::handle_confirm_signup); личность Google уже подтвердил, но
-  аккаунт заводится только по явному клику на форме подтверждения.
+  Регистрация — POST /auth/register (202 одинаково для
+  свободного и занятого email, сессию не выпускает,
+  email_verified=false → роль всегда user). Телефон
+  входит тем же POST /auth/login с platform/device_id и
+  получает токены в теле, без cookie.
 end note
 
-== 3. Браузер идёт по редиректу — SPA рисует дашборд ==
+== 3. Браузер идёт по редиректу — SPA рисует «Отчёты» ==
 
-Browser -> GW: GET / (следует за 302 из шага 2)
+Browser -> GW: GET / (после 302 из 2а; после 2б — без перезагрузки)
 GW -> WEB: GET / (proxy)
 WEB --> GW: 200 index.html
 GW --> Browser: 200 HTML
-Browser -> Browser: app.js: boot() — снова GET /auth/me
-
 Browser -> GW: GET /auth/me\nCookie: session=(jwt) — теперь есть
 GW -> AUTH: GET /auth/me (proxy)
-AUTH -> AUTH: authenticate(req) — подпись верна, не истёк
-AUTH -> REDIS: EXISTS access_token:hash(jwt)
+AUTH -> AUTH: authenticate(req) — подпись, exp, iss,\naud ∋ google-auth, scope ∋ account
+AUTH -> REDIS: EXISTS access_token:<sha256(jwt)>
 REDIS --> AUTH: 1 — не отозван
-AUTH --> GW: 200 {"id","email","name","role"}
+AUTH --> GW: 200 {"id","email","name","picture","role"}
 GW --> Browser: 200 JSON
-Browser -> Browser: app.js: renderDashboard(user) —\nимя/email/роль, форма создания кошелька,\nсписок кошельков (пока пустой)
+Browser -> Browser: app.js: отложенное приглашение? (см. invite-sequence.puml)\nзатем «Отчёты»
 
 note right of AUTH
-  EXISTS в Redis — ДОПОЛНИТЕЛЬНАЯ проверка (не источник истины: подпись+exp
-  самого JWT проверяются в любом случае раньше). Даёт возможность отозвать
-  access-токен раньше exp через POST /auth/logout (см. шаг 7) — но только
-  для запросов В ЭТОТ сервис (/auth/me, /admin/*). GW и API в шаге 4 ниже
-  проверяют подпись+exp по JWKS локально и в Redis НЕ ходят вообще — про
-  такое отозвание не узнают (см. README google-auth, "Мгновенный logout —
-  только в auth-сервисе").
+  EXISTS в Redis — ДОПОЛНИТЕЛЬНАЯ проверка (подпись+exp самого JWT
+  проверяются в любом случае раньше). Даёт отозвать access-токен раньше
+  exp через POST /auth/logout (шаг 7) — но только для запросов В ЭТОТ
+  сервис. GW и бекенды в шаге 4 проверяют JWT по JWKS локально и в Redis
+  НЕ ходят — про такое отозвание не узнают до exp.
 end note
 
-== 4. Защищённый API-вызов (создание кошелька) ==
+== 4. Защищённый API-вызов (баланс для «Отчётов») ==
 
-Browser -> GW: POST /api/wallets\nCookie: session=(jwt)\n{"currency":"USD","label":"Основной"}
-GW -> GW: **JWT-гейт**: peek_kid + jwks::Cache::find(kid) + verify_rs256
-alt токен отсутствует, просрочен или подпись не совпала
-  GW --> Browser: 401 (до бекенда не доходит — wallet-api\nвообще не видит этот запрос)
+Browser -> GW: GET /api/reports/balance?date=…&eq_currency=…\nCookie: session=(jwt)
+GW -> GW: **JWT-гейт**: peek_kid + jwks::Cache::find(kid) + verify_rs256,\nexp, aud ∋ wallet-report (адресат маршрута)
+alt токен отсутствует, просрочен, подпись не та или чужой aud
+  GW --> Browser: 401 (до бекенда не доходит)
 else токен валиден
-  GW -> API: POST /api/wallets (proxy, Cookie форвардится как есть)
-  API -> API: session::current_user() —\nПОВТОРНАЯ независимая проверка того же JWT\n(своя JWKS, никакого похода в auth-service\nна этот запрос)
-  API -> DB_WALLET: INSERT INTO wallets (id, owner_id=sub, ...)
-  DB_WALLET --> API: новая строка
-  API --> GW: 201 JSON {id, owner_id, currency, label, balance_cents}
-  GW --> Browser: 201 JSON {...}
-  Browser -> Browser: app.js добавляет кошелёк в список\n(в памяти вкладки — у wallet-api нет GET-списка)
+  GW -> REPORT: GET /api/reports/balance (proxy, Cookie как есть)
+  REPORT -> REPORT: ПОВТОРНАЯ независимая проверка того же JWT\n(своя JWKS; iss, aud ∋ wallet-report, scope ∋ reports:read)
+  REPORT -> DB_WALLET: SELECT … (леджер пользователя по sub,\nроль wallet_reader — только чтение)
+  DB_WALLET --> REPORT: остатки
+  REPORT --> GW: 200 JSON {accounts:[{account_uuid, balance}, …]}
+  GW --> Browser: 200 JSON
 end
 
-note right of API
-  wallet-api — своя, ОТДЕЛЬНАЯ от auth-service Postgres-база.
-  owner_id — не FK: своей таблицы users здесь нет, это просто
-  ""sub"" из уже проверенного токена (см. README wallet-api,
-  "Своя БД"). Реализованы только создание и удаление —
-  list/get/update и роли admin/support сознательно не перенесены
-  (см. README wallet-api, "Что реализовано, а что нет").
+note right of REPORT
+  Запись (синк, приглашения, справочники) идёт тем же путём, но в
+  wallet-api (/api/*, /sync/*, aud wallet-api). Прежнего демо
+  /api/wallets больше нет — см. components.puml.
 end note
 
 == 5. Обновление access-токена (истёк, пока refresh ещё жив) ==
 
-Browser -> GW: DELETE /api/wallets/:id\nCookie: session=(просроченный jwt)
-GW -> GW: **JWT-гейт**: verify_rs256 -> exp в прошлом -> невалиден
+Browser -> GW: GET /api/reports/…\nCookie: session=(просроченный jwt)
+GW -> GW: **JWT-гейт**: exp в прошлом -> невалиден
 GW --> Browser: 401
 Browser -> Browser: app.js: apiFetch() ловит 401,\nсам дёргает POST /auth/refresh
 
 Browser -> GW: POST /auth/refresh\nCookie: refresh_token=... (Path=/auth)
 GW -> AUTH: POST /auth/refresh (proxy — /auth/* не под JWT-гейтом)
 activate AUTH
-AUTH -> REDIS: GETDEL refresh_token:hash(refresh)\n(атомарно: читает user_id И удаляет ключ одной командой)
+AUTH -> REDIS: GETDEL refresh_token:<sha256(refresh)>\n(атомарно: читает И удаляет одной командой)
 alt ключа нет — невалиден, истёк или уже использован
   REDIS --> AUTH: nil
-  AUTH --> Browser: 401\nSet-Cookie session=; Max-Age=0\nSet-Cookie refresh_token=; Max-Age=0\n(app.js: renderLogin() — войдите заново)
+  AUTH --> Browser: 401\nSet-Cookie session=; Max-Age=0\nSet-Cookie refresh_token=; Max-Age=0\n(app.js: экран входа)
 else ключ был
-  REDIS --> AUTH: user_id
+  REDIS --> AUTH: {user, device, …}
   AUTH -> DB: find_user_by_id(user_id)
   DB --> AUTH: UserRecord
-  AUTH -> AUTH: issue_tokens() — новая пара\naccess+refresh (ротация, старый refresh уже удалён GETDEL'ом выше)
-  AUTH -> REDIS: SET refresh_token:hash(нового refresh) user_id\nEX REFRESH_TOKEN_TTL_SECS
-  AUTH -> REDIS: SET access_token:hash(новый access) user_id\nEX ACCESS_TOKEN_TTL_SECS\n(старый access-токен из Redis не удаляется —\nсам истечёт по своему TTL)
+  AUTH -> AUTH: issue_tokens() — новая пара access+refresh\nдля того же устройства (ротация)
+  AUTH -> REDIS: SET refresh_token:… / access_token:… EX …\n(старый access сам истечёт по TTL)
   AUTH --> Browser: 200 JSON {access_token, expires_in}\nSet-Cookie session=(новый jwt)\nSet-Cookie refresh_token=(новый)
-  Browser -> Browser: app.js повторяет исходный DELETE\nс уже обновлённой cookie
+  Browser -> Browser: app.js повторяет исходный запрос один раз
 end
 deactivate AUTH
 
 note right of AUTH
   Ротация обязательна: повторное предъявление уже использованного
-  refresh-токена (например, украденной копии) больше ничего не найдёт —
-  GETDEL удаляет запись атомарно при первом же use
-  (auth.cpp::rotate_refresh_token, repo.cpp::take_refresh_token). Раньше
-  (Postgres) тот же принцип обеспечивал "DELETE ... RETURNING" одним
-  SQL-запросом — GETDEL здесь ровно тот же приём, на Redis.
+  refresh-токена (например, украденной копии) ничего не найдёт —
+  GETDEL удаляет запись атомарно при первом же использовании.
+  Активные сессии пользователь видит и отзывает сам в «Моих
+  устройствах» (GET /auth/devices, POST /auth/devices/revoke).
 end note
 
 == 6. Список пользователей (только Role::Admin) ==
 
-Browser -> Browser: app.js: клик "Список пользователей"\n(кнопка в дашборде SPA, если role == admin) —\nrenderAdmin(), БЕЗ перезагрузки страницы
+Browser -> Browser: app.js: экран «Пользователи»\n(если role == admin), без перезагрузки страницы
 Browser -> GW: GET /admin/users\nCookie: session=(jwt)
-GW -> AUTH: GET /admin/users (proxy — префикс /admin/*\nна гейтвее НЕ под JWT-гейтом, своя логика внутри)
-AUTH -> AUTH: auth::authenticate(req) — та же проверка JWT,\nчто и на /api/*, но уже внутри сервиса
+GW -> AUTH: GET /admin/users (proxy — /admin/* не под JWT-гейтом)
+AUTH -> AUTH: authenticate(req) — та же проверка, что в шаге 3
 alt не залогинен
   AUTH --> Browser: 401 JSON {"error":"unauthenticated"}
 else залогинен, но role != Admin
@@ -201,71 +217,50 @@ else залогинен, но role != Admin
 else role == Admin
   AUTH -> DB: list_users()
   DB --> AUTH: все UserRecord
-  AUTH --> Browser: 200 JSON {"users":[...]}
+  AUTH --> Browser: 200 JSON {"users":[{id, email, email_verified, name,\nrole, created_at, last_login_at, active_sessions}]}
 end
-GW --> Browser: (форвардится как есть)
-Browser -> Browser: app.js: renderAdminTable(users) —\nтаблица + сортировка кликом по колонке,\nвсё на клиенте (см. шаг 8 про кнопку "Разлогинить")
+Browser -> Browser: app.js: таблица + сортировка на клиенте;\nстатистика по данным — GET /api/reports/admin/users/stats
 
 note right of AUTH
-  Раньше это была единственная HTML-страница, которую сервис ещё сам
-  рендерил (кроме index/confirm-signup/error-фолбэков — те остаются HTML
-  структурно, см. README google-auth, "Структура") — теперь обычный JSON
-  API, ровно как GET /auth/me. Перенос в SPA убрал и полную перезагрузку
-  страницы при переходе на список пользователей.
+  Там же у админа — «Задать пароль»
+  (POST /admin/users/{id}/password: отзывает все сессии пользователя).
 end note
 
 == 7. Логаут ==
 
 Browser -> Browser: app.js: клик "Выйти"
-Browser -> GW: POST /auth/logout\ncredentials: 'include' — cookie session\nи refresh_token (Path=/auth) уходят сами, тела не нужно
-GW -> AUTH: POST /auth/logout (proxy — /auth/* не под JWT-гейтом)
-AUTH -> REDIS: DEL access_token:hash(session-jwt)
-AUTH -> REDIS: DEL refresh_token:hash(refresh-cookie)
+Browser -> GW: POST /auth/logout\ncredentials: 'include' — cookie session\nи refresh_token (Path=/auth) уходят сами
+GW -> AUTH: POST /auth/logout (proxy)
+AUTH -> REDIS: DEL access_token:<sha256(session-jwt)>
+AUTH -> REDIS: DEL refresh_token:<sha256(refresh-cookie)>
 AUTH --> GW: 204\nSet-Cookie session=; Max-Age=0\nSet-Cookie refresh_token=; Max-Age=0
 GW --> Browser: 204 (cookies очищены в браузере)
-Browser -> Browser: app.js: renderLogin() —\nбез перезагрузки страницы
-
-note right of Browser
-  Раньше логаут шёл через wallet-bff (POST /logout — HTML-редирект,
-  server-to-server вызов POST /auth/logout на google-auth). Сервис
-  упразднён — SPA дёргает POST /auth/logout на google-auth НАПРЯМУЮ
-  (через гейтвей), он уже сам отдавал 204 и чистил cookies — обёртка была
-  не нужна даже раньше, просто заодно проксировала (см. README wallet-web,
-  "Куда делся wallet-bff").
-end note
+Browser -> Browser: app.js: экран входа — без перезагрузки страницы
 
 == 8. Принудительный logout другого пользователя (только Role::Admin) ==
 
-Browser -> Browser: app.js: кнопка "Разлогинить" в таблице\n(экран из шага 6) — window.confirm(...), затем fetch
+Browser -> Browser: app.js: кнопка "Разлогинить" в таблице\n— window.confirm(...), затем fetch
 Browser -> GW: POST /admin/users/:id/logout\nCookie: session=(jwt админа)
 GW -> AUTH: POST /admin/users/:id/logout (proxy)
-AUTH -> AUTH: auth::authenticate(req) + проверка role == Admin\n(та же логика, что и в шаге 6)
+AUTH -> AUTH: authenticate(req) + проверка role == Admin
 alt не залогинен / не Admin
   AUTH --> Browser: 401/403 JSON {"error":...}
 else id не найден в users
-  AUTH -> DB: find_user_by_id(id)
-  DB --> AUTH: nullopt
   AUTH --> Browser: 404 JSON {"error":"user not found"}
 else всё ок
   AUTH -> REDIS: SMEMBERS user_access_tokens:id\nSMEMBERS user_refresh_tokens:id
-  REDIS --> AUTH: хэши ВСЕХ активных токенов\nэтого пользователя (может быть\nнесколько устройств/браузеров)
-  AUTH -> REDIS: DEL access_token:hash (на каждый)\nDEL refresh_token:hash (на каждый)\nDEL user_access_tokens:id\nDEL user_refresh_tokens:id
+  REDIS --> AUTH: хэши ВСЕХ активных токенов\nэтого пользователя (все устройства)
+  AUTH -> REDIS: DEL access_token:… / refresh_token:… (на каждый)\nDEL user_access_tokens:id, user_refresh_tokens:id
   AUTH --> Browser: 204
 end
-GW --> Browser: (форвардится как есть)
-Browser -> Browser: app.js: кнопка -> "Разлогинен"\n(или alert с кодом ошибки)
+Browser -> Browser: app.js: кнопка -> "Разлогинен"\n(или сообщение с кодом ошибки)
 
 note right of AUTH
-  Отличие от обычного /auth/logout (шаг 7): тот знает только про ОДИН
-  токен — из cookie текущего запроса. Здесь же по user_id нужно найти
-  ВСЕ его активные токены сразу (человек мог залогиниться с нескольких
-  устройств) — а Redis не умеет "найти ключи по значению". Поэтому
-  store_access_token/store_refresh_token (см. компонентную диаграмму,
-  REDIS) ДОПОЛНИТЕЛЬНО кладут хэш в множество-индекс user_access_tokens:id/
-  user_refresh_tokens:id при каждой выдаче — здесь это единственный
-  потребитель. Та же оговорка про "только для этого сервиса" (см. шаг 6/7)
-  действует и тут — wallet-api/wallet-gateway про отзыв не узнают, их
-  access-токен "работает" до истечения exp.
+  Отличие от /auth/logout (шаг 7): тот знает только ОДИН токен — из
+  cookie. Здесь по user_id нужно найти ВСЕ токены, а Redis не умеет
+  "найти ключи по значению" — поэтому при каждой выдаче хэш кладётся
+  ещё и в множество-индекс. Сервисы, проверяющие JWT по JWKS, про отзыв
+  узнают только по истечении exp access-токена.
 end note
 
 @enduml

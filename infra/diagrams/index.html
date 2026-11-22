@@ -25,14 +25,17 @@
     <a href="#tg-components">telegram-components</a>
     <a href="#tg-link">telegram-link</a>
     <a href="#tg-commands">telegram-commands</a>
-    <a href="#tg-llm">telegram-llm (план)</a>
+    <a href="#tg-llm">telegram-llm</a>
     <a href="#mcp-oauth">mcp-oauth (план)</a>
     <a href="#token-exchange">token-exchange</a>
+    <a href="#tls-components">tls-ingress-components</a>
+    <a href="#tls-login">tls-ingress-login</a>
+    <a href="#internal-mtls">internal-mtls</a>
   </nav>
 </header>
 
 <section id="sequence">
-  <h2>sequence.puml — детальный сиквенс: анонимный визит → логин → защищённый вызов → refresh → logout</h2>
+  <h2>sequence.puml — детальный сиквенс: анонимный визит → вход (Google или пароль) → защищённый вызов → refresh → logout</h2>
   <div class="svg-box"><img src="wallet-transaction-sequence.svg" alt="sequence"></div>
 </section>
 
@@ -47,7 +50,7 @@
 </section>
 
 <section id="sync">
-  <h2>sync-sequence.puml — мобильная синхронизация (push/pull)</h2>
+  <h2>sync-sequence.puml — мобильная синхронизация (иконки, push порциями, pull с подтверждением и чисткой tombstone)</h2>
   <div class="svg-box"><img src="wallet-sync-sequence.svg" alt="sync-sequence"></div>
 </section>
 
@@ -72,7 +75,7 @@
 </section>
 
 <section id="tg-llm">
-  <h2>telegram-llm-sequence.puml — трата свободным текстом и вопросы через LM Studio (план)</h2>
+  <h2>telegram-llm-sequence.puml — трата свободным текстом и вопросы через задания wallet-ai</h2>
   <div class="svg-box"><img src="wallet-telegram-llm-sequence.svg" alt="telegram-llm-sequence"></div>
 </section>
 
@@ -82,8 +85,23 @@
 </section>
 
 <section id="token-exchange">
-  <h2>token-exchange-sequence.puml — обмен токена RFC 8693: wallet-ai → wallet-mcp → wallet-report</h2>
+  <h2>token-exchange-sequence.puml — обмен токена RFC 8693: wallet-ai → wallet-mcp → wallet-report / wallet-docs</h2>
   <div class="svg-box"><img src="wallet-token-exchange-sequence.svg" alt="token-exchange-sequence"></div>
+</section>
+
+<section id="tls-components">
+  <h2>tls-ingress-components.puml — TLS на входе контура: Caddy и три источника сертификата</h2>
+  <div class="svg-box"><img src="wallet-transaction-tls-ingress-components.svg" alt="tls-ingress-components"></div>
+</section>
+
+<section id="tls-login">
+  <h2>tls-ingress-login-sequence.puml — вход через Google за TLS-прокси (ветки по SNI)</h2>
+  <div class="svg-box"><img src="wallet-transaction-tls-ingress-login-sequence.svg" alt="tls-ingress-login-sequence"></div>
+</section>
+
+<section id="internal-mtls">
+  <h2>internal-mtls-components.puml — взаимный TLS внутри контура, служебный порт google-auth, Postgres и Redis</h2>
+  <div class="svg-box"><img src="wallet-transaction-internal-mtls-components.svg" alt="internal-mtls-components"></div>
 </section>
 
 </body>

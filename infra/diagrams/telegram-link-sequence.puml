@@ -7,16 +7,16 @@ skinparam wrapWidth 260
 actor "Пользователь" as U
 participant "Браузер\n(wallet-web, app.js)" as WEB
 participant "wallet-gateway" as GW
-participant "google-auth" as AUTH
+participant "google-auth\n:8080 публичный\n:8443 служебный (mTLS)" as AUTH
 database "Redis" as REDIS
-database "auth-база\n(telegram_links)" as AUTHDB
+database "база auth\n(telegram_links)" as AUTHDB
 participant "Telegram\n(приложение + Bot API)" as TG
 participant "wallet-telegram" as BOT
-database "wallet_telegram\n(tg_link — настройки)" as TGDB
+database "база telegram\n(tg_link — настройки)" as TGDB
 
 == 1. Выдача одноразовой ссылки (веб, пользователь уже вошёл) ==
 
-U -> WEB : Доступ и приглашения → Telegram-бот → «Подключить Telegram»
+U -> WEB : Настройки → блок Telegram → «Подключить Telegram»
 WEB -> GW : POST /auth/telegram/link-code\n(cookie session)
 GW -> AUTH : проксирует /auth/* как есть
 AUTH -> AUTH : authenticate() → user_id (aud google-auth, scope account)\ncode = base64url(24 случайных байта)
@@ -42,8 +42,13 @@ TG --> BOT : update {message: "/start <code>", from.id, chat.type=private}
 BOT -> BOT : только private-чат, allowlist,\nlooks_like_link_code(code)
 BOT -> AUTH : POST /internal/telegram/exchange\nX-Service-Secret\n{code, tg_user_id, tg_username}
 note right of BOT
-  Напрямую google-auth:8080 —
-  гейтвей /internal/* не маршрутизирует.
+  Напрямую, мимо гейтвея (/internal/* он
+  не проксирует): AUTH_INTERNAL_URL =
+  https://google-auth-internal:8443 в сети
+  auth-internal, с сертификатом бота (mTLS);
+  google-auth сверяет CN с actor
+  (INTERNAL_IDENTITY: test — enforce,
+  prod — observe).
 end note
 AUTH -> REDIS : GETDEL tg_link_code:<sha256(code)>
 alt код истёк или уже использован
@@ -67,7 +72,8 @@ WEB -> U : «Готово — бот подключён. Напишите ему
 note over BOT, AUTH
   Дальше на каждую команду бот берёт токен:
   POST /internal/telegram/token {tg_user_id} → JWT на 5 мин,
-  aud [wallet-report, wallet-api], scope reports:read expense:write
+  aud [wallet-report, wallet-api, wallet-ai],
+  scope reports:read expense:write ai:use
   (см. telegram-commands-sequence.puml).
 end note
 
@@ -90,7 +96,7 @@ else из Telegram: /unlink
   U -> TG : /unlink
   BOT -> TG : getUpdates
   TG --> BOT : update «/unlink»
-  BOT -> AUTH : DELETE /internal/telegram/links/{tg_user_id}\nX-Service-Secret
+  BOT -> AUTH : DELETE /internal/telegram/links/{tg_user_id}\nX-Service-Secret (служебный порт)
   AUTH -> AUTHDB : DELETE
   AUTH --> BOT : 204
   BOT -> TGDB : DELETE tg_link

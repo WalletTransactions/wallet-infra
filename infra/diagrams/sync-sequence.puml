@@ -1,5 +1,5 @@
 @startuml wallet-sync-sequence
-title WalletTransaction — офлайн-first синхронизация Android ↔ wallet-api\n(push порциями по ≤1000 строк, каждая — своя транзакция; постраничный pull)
+title WalletTransaction — офлайн-first синхронизация Android ↔ wallet-api\n(иконки — с сервера, свои — по настройке и флагу; push порциями по ≤1000 строк;\nпостраничный pull с подтверждением прочитанного и чисткой tombstone)
 
 skinparam sequenceMessageAlign center
 skinparam maxMessageSize 220
@@ -8,67 +8,98 @@ actor "Android\n(SyncRunner)" as App
 database "SQLite\n(локально,\nна устройстве)" as LDB
 participant "wallet-gateway\n:8090" as GW
 participant "wallet-api\n:8082" as API
-database "Postgres\n(wallet-api)" as PG
+database "Postgres\n(база wallet)" as PG
 
-== 1. PUSH — сбор dirty-строк, заливка иконок ==
-
-App -> LDB: SELECT * FROM <9 таблиц> WHERE dirty=1
-LDB --> App: dirty-строки (account, operation, currency,\ncurrency_pair_rate, icon, ...) — уже\nв порядке TABLE_ORDER (LinkedHashMap)
-
-note right of LDB
-  ""dirty"" — своя колонка НА КАЖДОЙ из 9 синхронизируемых таблиц (не общий
-  список/очередь) — 1 = ещё не отправлена, сбрасывает в 0 ТОЛЬКО clearDirty()
-  ниже, и только для uuid, реально вошедших в успешно применённую ПОРЦИЮ (не
-  голым ""WHERE dirty=1"" — за время похода на сервер пользователь мог
-  поправить что-то ещё, см. SyncEngine.clearDirty). ""uuid"" — тоже колонка
-  каждой из этих таблиц, сама ЛИЧНОСТЬ строки в протоколе (что уходит в
-  changes и чем сервер матчит ON CONFLICT); ""dirty"" отвечает только за то,
-  уходить ли строке в СЛЕДУЮЩУЮ порцию — uuid не меняется вообще (кроме
-  переклейки на existing_uuid при конфликте имени счёта, см. ниже).
+note over App, PG
+  Синхронизируемые таблицы (sync-push): icon, currency, currency_pair,
+  currency_pair_rate, currency_conversion, account, account_operating,
+  account_asset, counterparty, account_debt, operation, operation_link.
+  Гейтвей пропускает /sync/* после JWT-гейта (aud wallet-api), wallet-api
+  проверяет токен ещё раз сам (aud, scope wallet:read / wallet:write).
 end note
 
-loop для каждой dirty-строки icon
-  App -> GW: POST /sync/blobs\n(сырые байты, 1Б–1МиБ, любой Content-Type)
-  GW -> API: proxy (JWT уже проверен гейтвеем\nна входе в /sync/*, см. find_route)
-  API -> PG: INSERT INTO blob (sha256, bytes)\nON CONFLICT DO NOTHING
-  PG --> API: ok
-  API --> GW: 200 {"sha256":"..."}
-  GW --> App: 200 {"sha256":"..."}
-end
+== 1. Сбор dirty-строк ==
 
-== 2. PUSH — порции (SyncEngine.chunkIntoPortions), каждая — своя транзакция ==
+App -> LDB: SELECT * FROM <синхронизируемые таблицы> WHERE dirty=1
+LDB --> App: dirty-строки — уже в порядке TABLE_ORDER
+
+note right of LDB
+  ""dirty"" — своя колонка НА КАЖДОЙ синхронизируемой таблице (не общий
+  список/очередь) — 1 = ещё не отправлена, сбрасывает в 0 ТОЛЬКО
+  clearDirty() и только для uuid, вошедших в успешно применённую ПОРЦИЮ.
+  ""uuid"" — личность строки в протоколе (чем сервер матчит upsert);
+  меняется только при переклейке на existing_uuid при конфликте имени счёта.
+end note
+
+== 2. Свои иконки (по умолчанию шага НЕТ) ==
 
 note over App, GW
-  Порция — НЕ БОЛЕЕ 1000 строк суммарно (""MAX_PUSH_BATCH_ROWS""), но границы
-  режутся по факту, а не жёстко "одна порция — одна таблица": таблица
-  крупнее 1000 строк сама режется на несколько подряд идущих порций,
-  соседние МЕЛКИЕ таблицы могут ужиться в одной. Порядок таблиц МЕЖДУ
-  порциями не перемешивается — следующая таблица начинает заполняться
-  только когда ВСЯ предыдущая уже распределена (тот же TABLE_ORDER, что и
-  ""kApplyOrder"" на сервере, см. note в конце). Явного протокольного лимита
-  на размер батча нет (сервер принял бы и больше) — резать на порции
-  ~1000 строк — решение ЧИСТО клиентское, по памяти телефона и времени
-  удержания Postgres-транзакции, сервер о порциях ничего не знает: для
-  него это просто несколько независимых POST /sync/push подряд.
+  По умолчанию (server-managed-icons) иконки только СКАЧИВАЮТСЯ: в push нет
+  таблицы icon, /sync/blobs на запись не вызывается. Счёт или валюта со «своей»
+  иконкой (origin = 1, из галереи) уходят с icon_uuid серверного ЗАМЕСТИТЕЛЯ:
+  та же картинка (SHA-256) → то же имя без регистра → общая «unknown»; нет
+  заместителя — строка откладывается до следующего прохода.
+  Шаг ниже — только при настройке «Отправлять свои иконки на сервер» И последнем
+  capabilities.icon_upload = true из pull (optional-icon-upload).
+end note
+
+opt настройка включена и сервер разрешает (LEDGER_ICON_UPLOAD=on: сейчас test)
+  loop каждая живая своя иконка без серверного двойника по картинке
+    App -> GW: HEAD /sync/blobs/:sha256
+    GW -> API: proxy
+    API --> App: 200 есть / 404 нет
+    opt 404 — содержимого на сервере нет
+      App -> GW: POST /sync/blobs (сырые байты, 1Б–1МиБ)
+      GW -> API: proxy
+      alt флаг выключен (и вызывающий не admin)
+        API --> App: 403 {"error":"icon_upload_disabled"}
+      else
+        API -> PG: INSERT INTO blob (sha256, bytes)\nON CONFLICT DO NOTHING
+        API --> App: 200 {"sha256":"..."}
+      end
+    end
+    App -> GW: POST /sync/push {batch_id, changes: {"icon":[одна строка]}}\n— ОТДЕЛЬНЫЙ батч на иконку, до остальных строк
+    GW -> API: proxy
+    alt флаг выключен
+      API --> App: 200 {"seq":.., "icons_rejected":\n{"error":"icon_upload_disabled","uuids":[...]}}
+    else
+      API --> App: 200 {"seq":.., "conflicts":[]}
+      App -> LDB: origin = 0, dirty = 0\n(иконка стала «с сервера»)
+    end
+  end
+  note right of App
+    403 icon_upload_disabled или icons_rejected → настройка
+    выключается, уведомление «Сервер не принимает свои иконки —
+    отправка выключена.», проход идёт дальше с заместителями
+    (исход не «ошибка»). 409 по имени / 5xx — иконка остаётся
+    своей, повтор в следующем проходе. Отдельный батч нужен, чтобы
+    отброшенная иконка не дала 409 missing_reference батчу со счетами.
+  end note
+end
+
+== 3. PUSH — порции (SyncEngine.chunkIntoPortions), каждая — своя транзакция ==
+
+note over App, GW
+  Порция — НЕ БОЛЕЕ 1000 строк суммарно (""MAX_PUSH_BATCH_ROWS""), границы
+  режутся по факту: крупная таблица — несколько порций подряд, мелкие соседние
+  делят одну. Порядок таблиц между порциями не перемешивается (TABLE_ORDER ==
+  ""kApplyOrder"" на сервере). Лимит чисто клиентский — сервер о порциях не
+  знает: для него это несколько независимых POST /sync/push подряд.
 end note
 
 loop для каждой порции (≤1000 строк, TABLE_ORDER)
   App -> App: batch_id := UUID.random()\n(идемпотентность повторной отправки ЭТОЙ порции)
-  App -> GW: POST /sync/push\n{batch_id, changes: {"account":[...до 1000 строк...], ...}}
+  App -> GW: POST /sync/push\n{batch_id, changes: {"account":[...], "operation":[...], ...}}
   GW -> API: proxy
 
   API -> PG: SELECT response FROM sync_push_batch WHERE batch_id=$1
 
   note right of PG
-    ""sync_push_batch"" — ЕДИНСТВЕННАЯ таблица на сервере, хранящая "этот
-    batch_id уже применён": batch_id (PK, его же прислал клиент — свой на
-    КАЖДУЮ порцию), device_id, ledger_id, seq (тот же, что записан во все
-    изменённые ЭТОЙ порцией строки) и response (сохранённое тело ответа,
-    jsonb) — см. wallet-api/schema/table/sync_push_batch.sql. Ключ
-    идемпотентности на порцию целиком, не на строку и не на весь push
-    цикла: строка ниже пишется в ТОЙ ЖЕ транзакции, что и сами данные.
-    Задумано жить порядка недели и чиститься по расписанию (см. комментарий
-    в .sql) — сама очистка сейчас НЕ реализована ни в одном сервисе.
+    ""sync_push_batch"" — ЕДИНСТВЕННАЯ таблица-идемпотент на сервере:
+    batch_id (свой на КАЖДУЮ порцию), device_id, ledger_id, seq и
+    сохранённый response (включая icons_rejected). Пишется в ТОЙ ЖЕ
+    транзакции, что и данные. Чистка старых строк по-прежнему НЕ
+    реализована (вне purge-synced-tombstones, отдельная задача).
   end note
 
   alt batch_id уже встречался
@@ -77,100 +108,105 @@ loop для каждой порции (≤1000 строк, TABLE_ORDER)
     GW --> App: 200
   else новый batch_id
     API -> PG: BEGIN
-    API -> PG: SELECT next_seq(ledger_id)
+    API -> PG: следующий seq потока леджера
     PG --> API: seq — ОДИН на ВСЕ строки ЭТОЙ порции
-    loop ""kApplyOrder"" — таблицы ЭТОЙ порции по FK-зависимостям\n(тот же порядок, что TABLE_ORDER на клиенте)
-      API -> PG: INSERT ... ON CONFLICT (uuid) DO UPDATE
+    loop ""kApplyOrder"" — таблицы порции по FK-зависимостям
+      API -> PG: INSERT ... ON CONFLICT (uuid) DO UPDATE\n(ledger_id, seq, updated_by ставит сервер;\nобщие и чужие строки не перезаписываются)
     end
-    alt конфликт ""uq_account_name""
-      PG --> API: 23505
+    alt конфликт имени счёта (без учёта регистра)
       API --> GW: 409 {"conflicts":[{"uuid":"...","existing_uuid":"..."}]}
       GW --> App: 409 (транзакция ЭТОЙ порции откачена целиком)
       App -> LDB: переклеить account.uuid на existing_uuid
-      App -> App: дальнейшие порции ЭТОГО вызова\nНЕ пробуем — см. note выше про TABLE_ORDER
     else внешний ключ не найден
-      PG --> API: 23503
-      API --> GW: 409 {"error":"missing_reference"}
-      GW --> App: 409 (транзакция ЭТОЙ порции откачена целиком —\ndirty остаётся, следующий цикл синка повторит)
+      API --> GW: 409 {"error":"missing_reference", ...}
+      GW --> App: 409 (откат порции — dirty остаётся)
     else другой уникальный индекс (например, icon.name)
-      PG --> API: 23505 (не uq_account_name)
       API --> GW: 409 {"error":"duplicate_key","constraint":"..."}
-      GW --> App: 409 (без авто-разрешения —\nсм. org/docs/TODO_mobile_sync.md, "Открытые вопросы")
+      GW --> App: 409 (без авто-разрешения)
+    else строка без обязательного поля / неверное значение
+      API --> GW: 400 {"error":"invalid_row", ...}
+      GW --> App: 400
     else успех
       API -> PG: INSERT INTO sync_push_batch(...); COMMIT
       API --> GW: 200 {"seq":.., "conflicts":[]}
       GW --> App: 200
-      App -> LDB: dirty=0 для uuid ИЗ ЭТОЙ порции\n(остальные порции — своим ответом)
+      App -> LDB: dirty=0 для uuid ИЗ ЭТОЙ порции
     end
   end
 end
 
 note over App, GW
-  Если порция N отвергнута (409) или упала по сети (исключение) — порции
-  N+1..последняя из ЭТОГО вызова pushDirty НЕ отправляются вообще: по
-  TABLE_ORDER они идут ПОСЛЕ упавшей, так что тем более могут на неё
-  ссылаться. Порции 1..N-1 к этому моменту уже применены и dirty=0 —
-  теряется не всё, а только хвост. Следующий цикл синка (WorkManager либо
-  кнопка) соберёт dirty ЗАНОВО — то, что не прошло, плюс всё, что стало
-  dirty за это время — и нарежет на порции заново, уже своими batch_id.
+  Если порция N отвергнута или упала по сети — порции N+1.. этого вызова НЕ
+  отправляются (по TABLE_ORDER они могут ссылаться на упавшую). Порции 1..N-1
+  уже применены и dirty=0 — теряется только хвост; следующий проход нарежет
+  dirty заново, своими batch_id.
 end note
 
-== 3. PULL — постранично (SyncEngine.pullAll), пока курсоры не догонят сервер ==
+== 4. PULL — постранично (SyncEngine.pullAll), пока курсоры не догонят сервер ==
 
 loop пока ledger_seq/reference_seq продвигаются (максимум 10 000 страниц)
-  App -> GW: GET /sync/pull?ledger_seq=..&reference_seq=..&limit=500
+  App -> GW: GET /sync/pull?ledger_seq=..&reference_seq=..&limit=500\n&ledger_id=<известный леджер устройства>
   GW -> API: proxy
-  API -> PG: WITH candidates AS (...), cutoff AS (...)\n— 2 потока: ledger (свои данные)\nи reference (общие справочники)
+  API -> PG: курсоры запроса = ПОДТВЕРЖДЕНИЕ устройства:\nUPDATE device SET last_ack_seq (только если ledger_id\nсовпал с текущим леджером), last_ack_reference_seq
+  API -> PG: 2 потока: ledger (данные леджера)\nи reference (общие справочники, ledger_id IS NULL)
   PG --> API: строки (страница ≥ 500 — группа\nс одинаковым seq не разрезается)
-  API --> GW: 200 {"ledger":{"next_seq":.., "changes":{...}},\n"reference":{"next_seq":.., "changes":{...}}}
+  API --> GW: 200 {"ledger":{"ledger_id", "next_seq", "reset", "reset_reason"?,\n"changes":{...}}, "reference":{...},\n"capabilities":{"icon_upload": true|false}}
   GW --> App: 200
 
-  App -> App: merge(ledger.changes, reference.changes)
+  opt reset: true у потока
+    App -> App: курсор этого потока = 0, загрузка с нуля;\nпосле того как оба потока догнаны — удалить синкнутые\nстроки без dirty, которых не было в загрузке
+    note right of App
+      reset_reason "ahead" — курсор впереди головы
+      (база пересоздана); "purged" — до курсора
+      устройства tombstone уже вычищены (устройство
+      не делало pull дольше горизонта).
+    end note
+  end
+
+  App -> App: запомнить capabilities.icon_upload\n(serverIconUploadAllowed)
 
   opt пришли новые (по uuid) иконки
     App -> GW: GET /sync/blobs/:sha256\n(для каждой — ДО открытия транзакции)
     GW -> API: proxy
-    API --> GW: сырые байты
-    GW --> App: сырые байты
+    API --> App: сырые байты
   end
 
-  App -> LDB: BEGIN;\n""TABLE_ORDER"" (те же 9 таблиц, тот же порядок,\nчто ""kApplyOrder"" на сервере);\nCOMMIT
+  App -> LDB: BEGIN; TABLE_ORDER; COMMIT\n(своя иконка не затирается тем же заместителем)
   App -> App: сохранить ledger_seq/reference_seq\n(курсор двигается только ПОСЛЕ\nуспешного применения страницы)
 end
 
+opt после успешного pull потока, не чаще раза в час на поток
+  API -> PG: горизонт = min(подтверждений устройств леджера,\nделавших pull за 90 дней) → DELETE tombstone\n(deleted_at IS NOT NULL, seq ≤ горизонт, без ссылок на строку);\nchange_stream.purged_seq = горизонт
+  note right of API
+    Ошибка чистки ответ pull не задерживает и не
+    ломает (только в журнал). Чистку можно выключить
+    настройкой — подтверждения при этом пишутся.
+  end note
+end
+
 note right of App
-  ""ledgerSyncSeq""/""referenceSyncSeq"" — НЕ таблица SQLite, а два ключа в
-  Android ""SharedPreferences"" (AppSettings, файл prefs — см.
-  getLedgerSyncSeq/setLedgerSyncSeq). Это идентификатор "полученного", а не
-  зеркало push-стороны (""dirty""/""sync_push_batch"" выше) — не путать: там
-  "что уже ОТПРАВЛЕНО", здесь "по какой seq уже ПОЛУЧЕНО". Раздельно от
-  ""dirty"" — можно быть полностью в курсе чужих изменений (курсор упёрся в
-  текущий max seq сервера) и одновременно иметь свои dirty-строки,
-  ещё не отправленные, это независимые оси.
+  ""ledgerSyncSeq""/""referenceSyncSeq"" и ""syncLedgerId"" — не таблица SQLite,
+  а ключи Android ""SharedPreferences"" (AppSettings). Это ось «что ПОЛУЧЕНО»,
+  независимая от ""dirty"" («что ОТПРАВЛЕНО»). ledger_id в pull нужен, чтобы
+  устройство, перешедшее в другой леджер по приглашению, не подтвердило
+  чужой поток старым курсором.
 end note
 
 note over App, PG
-  ""ledger_member""/""ledger_invite"" (кто имеет доступ к леджеру и
-  приглашения по одноразовой ссылке, Фаза 6) — НЕ часть push/pull:
-  управляются отдельными эндпоинтами (""/api/ledger/*"",
-  ""/api/invites/accept"", только веб, см. infra/diagrams/
-  invite-sequence.puml), сервер-авторитетны целиком, клиент их не
-  синхронизирует и не кэширует.
+  ""ledger_member""/""ledger_invite"" (доступ к леджеру и приглашения) — НЕ часть
+  push/pull: отдельные эндпоинты ""/api/ledger/*"", ""/api/invites/accept""
+  (см. invite-sequence.puml), сервер-авторитетны целиком.
 end note
 
 note over App, PG
-  Инварианты, на которых это держится (см. org/docs/TODO_mobile_sync.md):
-  • ""kApplyOrder"" (sync_repo.cpp) == ""TABLE_ORDER"" (SyncEngine.java) — один и тот
-    же порядок И внутри одной порции push, И между отдельными порциями, И
-    при применении pull — иначе строка-ссылка (например, account.icon_uuid)
-    уходит раньше строки, на которую ссылается, и падает на FK (23503).
-  • Все строки ОДНОЙ порции push получают ОДИН seq (один вызов next_seq() на
-    транзакцию) — pull никогда не разрезает эту группу между двумя страницами.
-  • Порция — НЕ БОЛЕЕ ~1000 строк (клиентское решение, не протокольный
-    лимит — см. note у порционного loop выше); единственный ОТДЕЛЬНЫЙ лимит
-    протокола — у иконок (1Б–1МиБ на /sync/blobs, вне транзакции батча).
-  • Конфликт/ошибка ЛЮБОЙ строки — откатывает ВСЮ транзакцию ЭТОЙ порции
-    (не весь push целиком, как было до порций, — см. note выше).
+  Инварианты:
+  • ""kApplyOrder"" (wallet-api) == ""TABLE_ORDER"" (SyncEngine.java) — внутри порции
+    push, между порциями и при применении pull; иначе строка-ссылка уходит раньше
+    строки, на которую ссылается, и падает на FK (409 missing_reference).
+  • Все строки ОДНОЙ порции получают ОДИН seq — pull не разрезает эту группу.
+  • Конфликт/ошибка ЛЮБОЙ строки откатывает ВСЮ транзакцию ЭТОЙ порции.
+  • Tombstone живёт, пока его не получили все активные устройства леджера;
+    отставшее устройство получает reset_reason "purged" и грузит поток заново.
 end note
 
 @enduml
