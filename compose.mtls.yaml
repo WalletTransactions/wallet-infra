@@ -20,7 +20,11 @@
 # по шагам change (tasks.md, группы 4–7), поэтому на практике режим включают
 # после последнего из них.
 #
-# Здесь пока нет: Postgres и Redis (группа 9) и prometheus (группа 8). Входной порт гейтвея
+# Postgres (группа 9, задачи 9.1–9.2): сервер `db` с ssl=on, pg_hba `hostssl … scram` +
+# `hostnossl … reject` (infra/db/pg_hba.mtls.conf) и сертификатом контура; клиенты — sslmode=verify-full
+# с проверкой сервера по CA контура. Клиентский сертификат роли пока не требуется (ключ на bind-mount не
+# проходит проверку прав libpq/Postgres — tasks.md, 9.1). Redis (9.3) — исключение, см. README.
+# Здесь пока нет: prometheus (группа 8). Входной порт гейтвея
 # остаётся обычным HTTP — это граница контура (D9): у гейтвея mTLS на клиентской стороне и на
 # втором слушателе GATEWAY_MTLS_PORT (/healthz, /metrics, /version), healthcheck прежний.
 # wallet-web (nginx): `listen 80 ssl` с проверкой клиента, healthcheck — loopback 127.0.0.1:8081.
@@ -43,11 +47,14 @@ services:
   google-auth:
     environment:
       SERVICE_MTLS_PORT: "8442"
+      DATABASE_URL: postgresql://${AUTH_POSTGRES_USER}:${AUTH_POSTGRES_PASSWORD}@db:5432/${AUTH_POSTGRES_DB}?sslmode=verify-full&sslrootcert=/etc/wallet-tls/ca.pem
     healthcheck:
       test: !override ["CMD", "curl", "-f", "--cacert", "/etc/wallet-tls/ca.pem", "--cert", "/etc/wallet-tls/tls.crt", "--key", "/etc/wallet-tls/tls.key", "https://google-auth:8442/healthz"]
 
   wallet-api:
-    environment: *mtls-env
+    environment:
+      <<: *mtls-env
+      DATABASE_URL: postgresql://${WALLET_POSTGRES_USER}:${WALLET_POSTGRES_PASSWORD}@db:5432/${WALLET_POSTGRES_DB}?sslmode=verify-full&sslrootcert=/etc/wallet-tls/ca.pem
     volumes:
       - ${WALLET_MTLS_DIR:?}/wallet-api:/etc/wallet-tls:ro
     labels:
@@ -56,7 +63,9 @@ services:
       test: !override ["CMD", "curl", "-f", "--cacert", "/etc/wallet-tls/ca.pem", "--cert", "/etc/wallet-tls/tls.crt", "--key", "/etc/wallet-tls/tls.key", "https://wallet-api:8082/healthz"]
 
   wallet-report:
-    environment: *mtls-env
+    environment:
+      <<: *mtls-env
+      REPORTS_DATABASE_URL: postgresql://wallet_reader:${READER_POSTGRES_PASSWORD:?}@db:5432/${WALLET_POSTGRES_DB}?sslmode=verify-full&sslrootcert=/etc/wallet-tls/ca.pem
     volumes:
       - ${WALLET_MTLS_DIR:?}/wallet-report:/etc/wallet-tls:ro
     labels:
@@ -66,7 +75,9 @@ services:
 
   # Профиль docs (необязательный модуль): описание берётся из compose.yaml.
   wallet-docs:
-    environment: *mtls-env
+    environment:
+      <<: *mtls-env
+      DATABASE_URL: postgresql://${DOCS_POSTGRES_USER-}:${DOCS_POSTGRES_PASSWORD-}@db:5432/${DOCS_POSTGRES_DB-}?sslmode=verify-full&sslrootcert=/etc/wallet-tls/ca.pem
     volumes:
       - ${WALLET_MTLS_DIR:?}/wallet-docs:/etc/wallet-tls:ro
     labels:
@@ -89,6 +100,7 @@ services:
   wallet-telegram:
     environment:
       INTERNAL_MTLS: "true"
+      DATABASE_URL: postgresql://${TELEGRAM_POSTGRES_USER}:${TELEGRAM_POSTGRES_PASSWORD}@db:5432/${TELEGRAM_POSTGRES_DB}?sslmode=verify-full&sslrootcert=/etc/wallet-tls/ca.pem
     healthcheck:
       test: !override ["CMD", "curl", "-f", "--cacert", "/etc/wallet-tls/ca.pem", "--cert", "/etc/wallet-tls/tls.crt", "--key", "/etc/wallet-tls/tls.key", "https://wallet-telegram:8086/healthz"]
 
@@ -101,6 +113,7 @@ services:
   wallet-ai:
     environment:
       INTERNAL_MTLS: "true"
+      DATABASE_URL: postgresql://${AI_POSTGRES_USER}:${AI_POSTGRES_PASSWORD}@db:5432/${AI_POSTGRES_DB}?sslmode=verify-full&sslrootcert=/etc/wallet-tls/ca.pem
     healthcheck:
       test: !override ["CMD", "curl", "-f", "--cacert", "/etc/wallet-tls/ca.pem", "--cert", "/etc/wallet-tls/tls.crt", "--key", "/etc/wallet-tls/tls.key", "https://wallet-ai:8087/healthz"]
 
@@ -115,3 +128,39 @@ services:
       wallet.mtls-config: ${WALLET_MTLS_HASH_WALLET_WEB:?}
     healthcheck:
       test: !override ["CMD", "wget", "-qO-", "http://127.0.0.1:8081/healthz"]
+
+  # Postgres (задача 9.1): TLS на сервере. Ключ Postgres принимает только у своего пользователя с правами
+  # 0600, а на bind-mount он принадлежит хостовому пользователю — поэтому обёртка копирует пару в
+  # каталог вне данных (пересоздаётся с контейнером) и отдаёт её postgres. Команда повторяет compose.yaml
+  # (!override: список заменяется целиком) плюс ssl и свой pg_hba.
+  db:
+    entrypoint:
+      - sh
+      - -c
+      - >-
+        install -d -m 700 -o postgres -g postgres /var/lib/postgresql/tls &&
+        install -m 600 -o postgres -g postgres /etc/wallet-tls/tls.key /var/lib/postgresql/tls/server.key &&
+        install -m 644 -o postgres -g postgres /etc/wallet-tls/tls.crt /var/lib/postgresql/tls/server.crt &&
+        exec docker-entrypoint.sh "$$@"
+      - --
+    command: !override
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - pg_stat_statements.track=all
+      - -c
+      - track_io_timing=on
+      - -c
+      - ssl=on
+      - -c
+      - ssl_cert_file=/var/lib/postgresql/tls/server.crt
+      - -c
+      - ssl_key_file=/var/lib/postgresql/tls/server.key
+      - -c
+      - hba_file=/etc/postgresql/pg_hba.conf
+    volumes:
+      - ${WALLET_MTLS_DIR:?}/db:/etc/wallet-tls:ro
+      - ./infra/db/pg_hba.mtls.conf:/etc/postgresql/pg_hba.conf:ro
+    labels:
+      wallet.mtls-config: ${WALLET_MTLS_HASH_DB:?}

@@ -37,7 +37,7 @@ datasources:
     database: perf_history
     user: perf_reader
     jsonData:
-      sslmode: disable
+      sslmode: $TEST_PG_SSLMODE
       # 1600 = Postgres 16.x (см. pgvector/pgvector:pg16 у "db" в wallet-infra/compose.yaml) —
       # влияет только на то, какой диалект SQL-автодополнения/фич Grafana
       # предполагает, не на сам протокол подключения.

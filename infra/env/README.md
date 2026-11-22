@@ -717,6 +717,38 @@ bash -c 'source infra/env/loadtest_env.sh && loadtest_override wallet-report REP
 bash -c 'source infra/env/loadtest_env.sh && loadtest_restore wallet-report'
 ```
 
+### TLS до Postgres и Redis (задачи 9.1–9.4 `add-internal-mtls`)
+
+Включается тем же `WALLET_INTERNAL_MTLS=true` и откатывается им же (выключение возвращает прежний `pg_hba`
+из каталога данных — том базы режим не меняет).
+
+**Postgres.** `db` получает сертификат контура (`mtls.sh`, имена `db` и `db-<env>`), `ssl=on` и свой
+`pg_hba` (`infra/db/pg_hba.mtls.conf`): `local` — сокет внутри контейнера, `hostssl … scram-sha-256` —
+остальные, `hostnossl … reject` — без TLS отказ даже с верным паролем. Ключ Postgres принимает только у своего
+пользователя с правами 0600, поэтому entrypoint (`compose.mtls.yaml`) копирует пару в
+`/var/lib/postgresql/tls` и отдаёт её `postgres`; пересоздаётся с контейнером. Клиенты:
+
+| Кто | Режим |
+| --- | --- |
+| сервисы (`DATABASE_URL`, `REPORTS_DATABASE_URL`) | `sslmode=verify-full`, `sslrootcert=/etc/wallet-tls/ca.pem` |
+| `migrate.sh` (мигратор в контейнере) | `verify-full` с CA контура (`generated/mtls/db/ca.pem`); режим выключен — `disable` |
+| postgres-exporter, датасорс Grafana «Perf History» | `require` (шифрование без проверки сервера); режим выключен — `disable` (`infra/monitoring/up.sh` читает режим из развёрнутого контура, поэтому после смены режима — `bash infra/monitoring/up.sh`) |
+| `docker exec … psql` в контейнере `db` | сокет, TLS не нужен |
+| DBeaver/psql с хоста (`127.0.0.1:<порт>`) | `sslmode=require` и пароль роли, без клиентского сертификата |
+
+**Исключение: клиентский сертификат роли не требуется.** Спека `internal-service-tls` предполагает
+`clientcert=verify-ca` для ролей сервисов. libpq (и сервер Postgres) принимают файл ключа только с правами
+0600 у процесса-владельца, а ключи сертификатов лежат на bind-mount хостового пользователя с правами 644 —
+процессы сервисов (другой uid) их отвергают. Для `clientcert` нужна правка образов (копирование ключа в
+рабочий каталог с нужными правами) в каждом сервисе. Пока защита — шифрование, проверка сервера по CA контура и
+пароль роли; роль сервиса без сертификата **не** отклоняется. Закрывает отдельная задача.
+
+**Redis: TLS нет (исключение, задача 9.3).** Клиент google-auth — свой, на голом RESP-сокете
+(`redis_client.cpp`, одно постоянное соединение), без библиотеки TLS. Включить `tls-port` на сервере значило бы
+дописать клиент (OpenSSL-сокет, переподключение), что выходит за рамки этого change. Защита Redis сейчас: пароль
+и ACL с минимальными правами (часть R), `default` выключен, порт наружу не публикуется, клиентов — один
+(google-auth) плюс redis-exporter. Перехват в сети контура не закрыт; отдельная задача — TLS в клиенте.
+
 ## Redis: пароль и ACL
 
 Redis контура хранит токены google-auth (refresh на 30 дней, access, MCP, коды привязки Telegram,
