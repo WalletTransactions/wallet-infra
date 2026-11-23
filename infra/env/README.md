@@ -741,18 +741,23 @@ bash -c 'source infra/env/loadtest_env.sh && loadtest_restore wallet-report'
 
 | Кто | Режим |
 | --- | --- |
-| сервисы (`DATABASE_URL`, `REPORTS_DATABASE_URL`) | `sslmode=verify-full`, `sslrootcert=/etc/wallet-tls/ca.pem` |
+| сервисы (`DATABASE_URL`, `REPORTS_DATABASE_URL`) | `sslmode=verify-full`, `sslrootcert=/etc/wallet-tls/ca.pem` и свой сертификат (`sslcert`, `sslkey` из `/etc/wallet-pgtls`); роль сервиса без сертификата CA контура отклоняется (`clientcert=verify-ca`) |
 | `migrate.sh` (мигратор в контейнере) | `verify-full` с CA контура (`generated/mtls/db/ca.pem`); режим выключен — `disable` |
 | postgres-exporter, датасорс Grafana «Perf History» | `require` (шифрование без проверки сервера); режим выключен — `disable` (`infra/monitoring/up.sh` читает режим из развёрнутого контура, поэтому после смены режима — `bash infra/monitoring/up.sh`) |
 | `docker exec … psql` в контейнере `db` | сокет, TLS не нужен |
 | DBeaver/psql с хоста (`127.0.0.1:<порт>`) | `sslmode=require` и пароль роли, без клиентского сертификата |
 
-**Исключение: клиентский сертификат роли не требуется.** Спека `internal-service-tls` предполагает
-`clientcert=verify-ca` для ролей сервисов. libpq (и сервер Postgres) принимают файл ключа только с правами
-0600 у процесса-владельца, а ключи сертификатов лежат на bind-mount хостового пользователя с правами 644 —
-процессы сервисов (другой uid) их отвергают. Для `clientcert` нужна правка образов (копирование ключа в
-рабочий каталог с нужными правами) в каждом сервисе. Пока защита — шифрование, проверка сервера по CA контура и
-пароль роли; роль сервиса без сертификата **не** отклоняется. Закрывает отдельная задача.
+**Клиентский сертификат роли сервиса (задача 9.1).** Роли `google_auth`, `wallet_api`, `wallet_reader`,
+`wallet_ai`, `wallet_telegram`, `wallet_docs` входят только по паролю **и** сертификату CA контура
+(`pg_hba.mtls.conf`, `clientcert=verify-ca`; Postgres берёт CA из `ssl_ca_file`). libpq принимает ключ только
+с правами 0600 у пользователя процесса, а `generated/mtls` — bind-mount хостового пользователя (0644, другой
+uid). Поэтому пары раскладывает одноразовый сервис `pg-client-keys` (`compose.mtls.yaml`): копирует
+`tls.crt`/`tls.key` шести сервисов с базой в том `pg-client-keys` с владельцем `999` (пользователь `appuser`
+всех образов; другой — `WALLET_SERVICE_UID`) и правами 0600, а сервис монтирует только свой подкаталог
+(`volume.subpath`) в `/etc/wallet-pgtls`. `pg-client-keys` запускается при каждом `up.sh` (сервисы зависят от
+него) и в `deploy.sh` перед сервисом с базой — перевыпущенный `mtls.sh` сертификат доходит и до libpq.
+Проверка: `select usename, client_dn from pg_stat_ssl join pg_stat_activity using (pid)` в контейнере `db` —
+у ролей сервисов `client_dn` = `/CN=<сервис>`.
 
 **Redis: TLS нет (исключение, задача 9.3).** Клиент google-auth — свой, на голом RESP-сокете
 (`redis_client.cpp`, одно постоянное соединение), без библиотеки TLS. Включить `tls-port` на сервере значило бы

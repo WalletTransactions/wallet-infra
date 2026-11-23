@@ -22,8 +22,10 @@
 #
 # Postgres (группа 9, задачи 9.1–9.2): сервер `db` с ssl=on, pg_hba `hostssl … scram` +
 # `hostnossl … reject` (infra/db/pg_hba.mtls.conf) и сертификатом контура; клиенты — sslmode=verify-full
-# с проверкой сервера по CA контура. Клиентский сертификат роли пока не требуется (ключ на bind-mount не
-# проходит проверку прав libpq/Postgres — tasks.md, 9.1). Redis (9.3) — исключение, см. README.
+# с проверкой сервера по CA контура и своим сертификатом (роли сервисов — clientcert=verify-ca).
+# libpq берёт ключ только с правами 0600 у пользователя процесса, а bind-mount принадлежит хосту, —
+# поэтому пары для Postgres раскладывает одноразовый pg-client-keys (ниже) в том pg-client-keys,
+# каждому сервису — только его подкаталог. Redis (9.3) — исключение, см. README.
 # Здесь пока нет: prometheus (группа 8). Входной порт гейтвея
 # остаётся обычным HTTP — это граница контура (D9): у гейтвея mTLS на клиентской стороне и на
 # втором слушателе GATEWAY_MTLS_PORT (/healthz, /metrics, /version), healthcheck прежний.
@@ -37,7 +39,39 @@ x-mtls-env: &mtls-env
   # по https (без этой переменной TLS_* включают только mTLS к служебному порту google-auth).
   INTERNAL_MTLS: "true"
 
+# Сервисы с базой ждут, пока pg-client-keys разложит пары (задача 9.1).
+x-pg-keys-dep: &pg-keys-dep
+  pg-client-keys:
+    condition: service_completed_successfully
+
 services:
+  # Одноразовый: копирует tls.crt и tls.key сервисов с базой из generated/mtls в том pg-client-keys
+  # с владельцем — пользователем сервиса (WALLET_SERVICE_UID, у всех образов 999) и правами 0600
+  # (иначе libpq: «private key file has group or world access»). Запускается при каждом up.sh (сервисы
+  # зависят от него) и в deploy.sh перед сервисом с базой — перевыпущенный mtls.sh сертификат доходит
+  # и до libpq. Образ — тот же, что у db (уже на хосте).
+  pg-client-keys:
+    image: pgvector/pgvector:pg16
+    restart: "no"
+    network_mode: none
+    entrypoint:
+      - sh
+      - -ec
+      - >-
+        for s in google-auth wallet-api wallet-report wallet-docs wallet-telegram wallet-ai; do
+        [ -f /in/$$s/tls.key ] || continue;
+        install -d -m 700 -o $$UID_ -g $$UID_ /out/$$s;
+        install -m 600 -o $$UID_ -g $$UID_ /in/$$s/tls.key /out/$$s/tls.key.new;
+        install -m 644 -o $$UID_ -g $$UID_ /in/$$s/tls.crt /out/$$s/tls.crt.new;
+        mv -f /out/$$s/tls.key.new /out/$$s/tls.key;
+        mv -f /out/$$s/tls.crt.new /out/$$s/tls.crt;
+        done
+    environment:
+      UID_: ${WALLET_SERVICE_UID:-999}
+    volumes:
+      - ${WALLET_MTLS_DIR:?}:/in:ro
+      - pg-client-keys:/out
+
   # google-auth: сертификат, TLS_* и метка — в compose.auth-mtls.yaml (подключается и при этом
   # режиме). Публичный порт остаётся обычным HTTP (гейтвей и JWKS, design D9), /internal/* — на
   # служебном :8443, а /healthz и /metrics — только по mTLS на отдельном порту :8442
@@ -47,16 +81,31 @@ services:
   google-auth:
     environment:
       SERVICE_MTLS_PORT: "8442"
-      DATABASE_URL: postgresql://${AUTH_POSTGRES_USER}:${AUTH_POSTGRES_PASSWORD}@db:5432/${AUTH_POSTGRES_DB}?sslmode=verify-full&sslrootcert=/etc/wallet-tls/ca.pem
+      DATABASE_URL: postgresql://${AUTH_POSTGRES_USER}:${AUTH_POSTGRES_PASSWORD}@db:5432/${AUTH_POSTGRES_DB}?sslmode=verify-full&sslrootcert=/etc/wallet-tls/ca.pem&sslcert=/etc/wallet-pgtls/tls.crt&sslkey=/etc/wallet-pgtls/tls.key
+    volumes:
+      - type: volume
+        source: pg-client-keys
+        target: /etc/wallet-pgtls
+        read_only: true
+        volume:
+          subpath: google-auth
+    depends_on: *pg-keys-dep
     healthcheck:
       test: !override ["CMD", "curl", "-f", "--cacert", "/etc/wallet-tls/ca.pem", "--cert", "/etc/wallet-tls/tls.crt", "--key", "/etc/wallet-tls/tls.key", "https://google-auth:8442/healthz"]
 
   wallet-api:
     environment:
       <<: *mtls-env
-      DATABASE_URL: postgresql://${WALLET_POSTGRES_USER}:${WALLET_POSTGRES_PASSWORD}@db:5432/${WALLET_POSTGRES_DB}?sslmode=verify-full&sslrootcert=/etc/wallet-tls/ca.pem
+      DATABASE_URL: postgresql://${WALLET_POSTGRES_USER}:${WALLET_POSTGRES_PASSWORD}@db:5432/${WALLET_POSTGRES_DB}?sslmode=verify-full&sslrootcert=/etc/wallet-tls/ca.pem&sslcert=/etc/wallet-pgtls/tls.crt&sslkey=/etc/wallet-pgtls/tls.key
     volumes:
       - ${WALLET_MTLS_DIR:?}/wallet-api:/etc/wallet-tls:ro
+      - type: volume
+        source: pg-client-keys
+        target: /etc/wallet-pgtls
+        read_only: true
+        volume:
+          subpath: wallet-api
+    depends_on: *pg-keys-dep
     labels:
       wallet.mtls-config: ${WALLET_MTLS_HASH_WALLET_API:?}
     healthcheck:
@@ -65,9 +114,16 @@ services:
   wallet-report:
     environment:
       <<: *mtls-env
-      REPORTS_DATABASE_URL: postgresql://wallet_reader:${READER_POSTGRES_PASSWORD:?}@db:5432/${WALLET_POSTGRES_DB}?sslmode=verify-full&sslrootcert=/etc/wallet-tls/ca.pem
+      REPORTS_DATABASE_URL: postgresql://wallet_reader:${READER_POSTGRES_PASSWORD:?}@db:5432/${WALLET_POSTGRES_DB}?sslmode=verify-full&sslrootcert=/etc/wallet-tls/ca.pem&sslcert=/etc/wallet-pgtls/tls.crt&sslkey=/etc/wallet-pgtls/tls.key
     volumes:
       - ${WALLET_MTLS_DIR:?}/wallet-report:/etc/wallet-tls:ro
+      - type: volume
+        source: pg-client-keys
+        target: /etc/wallet-pgtls
+        read_only: true
+        volume:
+          subpath: wallet-report
+    depends_on: *pg-keys-dep
     labels:
       wallet.mtls-config: ${WALLET_MTLS_HASH_WALLET_REPORT:?}
     healthcheck:
@@ -77,9 +133,16 @@ services:
   wallet-docs:
     environment:
       <<: *mtls-env
-      DATABASE_URL: postgresql://${DOCS_POSTGRES_USER-}:${DOCS_POSTGRES_PASSWORD-}@db:5432/${DOCS_POSTGRES_DB-}?sslmode=verify-full&sslrootcert=/etc/wallet-tls/ca.pem
+      DATABASE_URL: postgresql://${DOCS_POSTGRES_USER-}:${DOCS_POSTGRES_PASSWORD-}@db:5432/${DOCS_POSTGRES_DB-}?sslmode=verify-full&sslrootcert=/etc/wallet-tls/ca.pem&sslcert=/etc/wallet-pgtls/tls.crt&sslkey=/etc/wallet-pgtls/tls.key
     volumes:
       - ${WALLET_MTLS_DIR:?}/wallet-docs:/etc/wallet-tls:ro
+      - type: volume
+        source: pg-client-keys
+        target: /etc/wallet-pgtls
+        read_only: true
+        volume:
+          subpath: wallet-docs
+    depends_on: *pg-keys-dep
     labels:
       wallet.mtls-config: ${WALLET_MTLS_HASH_WALLET_DOCS:?}
     healthcheck:
@@ -100,7 +163,15 @@ services:
   wallet-telegram:
     environment:
       INTERNAL_MTLS: "true"
-      DATABASE_URL: postgresql://${TELEGRAM_POSTGRES_USER}:${TELEGRAM_POSTGRES_PASSWORD}@db:5432/${TELEGRAM_POSTGRES_DB}?sslmode=verify-full&sslrootcert=/etc/wallet-tls/ca.pem
+      DATABASE_URL: postgresql://${TELEGRAM_POSTGRES_USER}:${TELEGRAM_POSTGRES_PASSWORD}@db:5432/${TELEGRAM_POSTGRES_DB}?sslmode=verify-full&sslrootcert=/etc/wallet-tls/ca.pem&sslcert=/etc/wallet-pgtls/tls.crt&sslkey=/etc/wallet-pgtls/tls.key
+    volumes:
+      - type: volume
+        source: pg-client-keys
+        target: /etc/wallet-pgtls
+        read_only: true
+        volume:
+          subpath: wallet-telegram
+    depends_on: *pg-keys-dep
     healthcheck:
       test: !override ["CMD", "curl", "-f", "--cacert", "/etc/wallet-tls/ca.pem", "--cert", "/etc/wallet-tls/tls.crt", "--key", "/etc/wallet-tls/tls.key", "https://wallet-telegram:8086/healthz"]
 
@@ -113,7 +184,15 @@ services:
   wallet-ai:
     environment:
       INTERNAL_MTLS: "true"
-      DATABASE_URL: postgresql://${AI_POSTGRES_USER}:${AI_POSTGRES_PASSWORD}@db:5432/${AI_POSTGRES_DB}?sslmode=verify-full&sslrootcert=/etc/wallet-tls/ca.pem
+      DATABASE_URL: postgresql://${AI_POSTGRES_USER}:${AI_POSTGRES_PASSWORD}@db:5432/${AI_POSTGRES_DB}?sslmode=verify-full&sslrootcert=/etc/wallet-tls/ca.pem&sslcert=/etc/wallet-pgtls/tls.crt&sslkey=/etc/wallet-pgtls/tls.key
+    volumes:
+      - type: volume
+        source: pg-client-keys
+        target: /etc/wallet-pgtls
+        read_only: true
+        volume:
+          subpath: wallet-ai
+    depends_on: *pg-keys-dep
     healthcheck:
       test: !override ["CMD", "curl", "-f", "--cacert", "/etc/wallet-tls/ca.pem", "--cert", "/etc/wallet-tls/tls.crt", "--key", "/etc/wallet-tls/tls.key", "https://wallet-ai:8087/healthz"]
 
@@ -141,6 +220,7 @@ services:
         install -d -m 700 -o postgres -g postgres /var/lib/postgresql/tls &&
         install -m 600 -o postgres -g postgres /etc/wallet-tls/tls.key /var/lib/postgresql/tls/server.key &&
         install -m 644 -o postgres -g postgres /etc/wallet-tls/tls.crt /var/lib/postgresql/tls/server.crt &&
+        install -m 644 -o postgres -g postgres /etc/wallet-tls/ca.pem /var/lib/postgresql/tls/ca.pem &&
         exec docker-entrypoint.sh "$$@"
       - --
     command: !override
@@ -158,9 +238,16 @@ services:
       - -c
       - ssl_key_file=/var/lib/postgresql/tls/server.key
       - -c
+      - ssl_ca_file=/var/lib/postgresql/tls/ca.pem
+      - -c
       - hba_file=/etc/postgresql/pg_hba.conf
     volumes:
       - ${WALLET_MTLS_DIR:?}/db:/etc/wallet-tls:ro
       - ./infra/db/pg_hba.mtls.conf:/etc/postgresql/pg_hba.conf:ro
     labels:
       wallet.mtls-config: ${WALLET_MTLS_HASH_DB:?}
+
+volumes:
+  # Пары сертификатов для libpq (pg-client-keys). Удалить не страшно: содержимое выводится из
+  # generated/mtls при каждом запуске pg-client-keys.
+  pg-client-keys:
