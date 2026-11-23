@@ -21,7 +21,11 @@
 #     сертификат files, compose пересоздаёт прокси;
 #   - WALLET_TLS_FILES_SRC, WALLET_TAILSCALE_DIR: источники монтирования —
 #     настоящие только в своём режиме, иначе пустой каталог generated/empty
-#     (сокет tailscaled не попадает в прокси вне режима tailscale).
+#     (сокет tailscaled не попадает в прокси вне режима tailscale);
+#   - WALLET_TLS_CA_SRC, WALLET_TLS_CA_PUBLIC: корень CA контура из секретов
+#     (<secrets>/tls-ca/, change tls-ca-in-secrets) и его публичная копия
+#     generated/ca/ca.crt, которую прокси отдаёт по /ca.crt. Без корня в
+#     секретах — пустой каталог, и Caddy держит CA в своём томе, как раньше.
 
 # env_setting <ключ> — значение из infra/env/<env>.env выкатанного описания
 # контура (последнее, если ключ повторяется; пусто, если нет).
@@ -128,15 +132,43 @@ _tls_join() {
     echo "${joined//,/, }"
 }
 
-# _tls_caddy_site <адреса через ", "> <строки tls-директивы...>
+# _tls_caddy_site <адреса через ", "> <строки tls-директивы...> — блок сайта.
+# При корне CA в секретах (_TLS_CA_SERVED) на любом адресе отдаётся /ca.crt:
+# публичная копия корня из generated/ca, ключа в этом каталоге нет.
 _tls_caddy_site() {
     local addrs="$1"
     shift
     echo
     echo "$addrs {"
     printf '\t%s\n' "$@"
-    printf '\treverse_proxy wallet-gateway:8090\n'
+    if [[ -n "${_TLS_CA_SERVED:-}" ]]; then
+        printf '\thandle /ca.crt {\n'
+        printf '\t\troot * /srv/ca\n'
+        printf '\t\theader Content-Type application/x-x509-ca-cert\n'
+        printf '\t\theader Content-Disposition "attachment; filename=wallet-%s-root.crt"\n' "$ENV_NAME"
+        printf '\t\tfile_server\n'
+        printf '\t}\n'
+    fi
+    printf '\thandle {\n\t\treverse_proxy wallet-gateway:8090\n\t}\n'
     echo "}"
+}
+
+# _tls_ca_check <каталог> — корень CA контура в секретах годен: оба файла,
+# ключ 600, ключ от этого сертификата, это CA и он не истекает в ближайший год.
+# Значения ключа не печатаются.
+_tls_ca_check() {
+    local dir="$1" m
+    [[ -s "$dir/root.crt" && -s "$dir/root.key" ]] \
+        || die "tls: в $dir нужны оба файла root.crt и root.key (создать или перенести из тома: bash infra/env/tls-ca-init.sh $ENV_NAME)"
+    m="$(stat -c %a "$dir/root.key")"
+    [[ "$m" == "600" ]] || die "права $dir/root.key — $m, нужно 600 (chmod 600)"
+    openssl x509 -in "$dir/root.crt" -noout -ext basicConstraints 2>/dev/null | grep -q 'CA:TRUE' \
+        || die "tls: $dir/root.crt — не сертификат CA"
+    [[ "$(openssl x509 -in "$dir/root.crt" -noout -pubkey 2>/dev/null)" == \
+       "$(openssl pkey -in "$dir/root.key" -pubout 2>/dev/null)" ]] \
+        || die "tls: $dir/root.key не подходит к $dir/root.crt"
+    openssl x509 -in "$dir/root.crt" -noout -checkend $((365 * 86400)) >/dev/null \
+        || die "tls: корень $dir/root.crt истекает менее чем через год — выпустите новый (tls-ca-init.sh) и переустановите его на устройства"
 }
 
 # env_tls_prepare — выводит и записывает всё, что зависит от WALLET_TLS (см.
@@ -149,6 +181,9 @@ env_tls_prepare() {
     export WALLET_GENERATED_DIR="$gen"
     export WALLET_TLS_FILES_SRC="$gen/empty"
     export WALLET_TAILSCALE_DIR="$gen/empty"
+    export WALLET_TLS_CA_SRC="$gen/empty"
+    export WALLET_TLS_CA_PUBLIC="$gen/empty"
+    _TLS_CA_SERVED=""
 
     if ! env_tls_enabled; then
         local tls
@@ -189,6 +224,25 @@ env_tls_prepare() {
     [[ $(( ${#ts_hosts[@]} + ${#other_hosts[@]} )) -gt 0 ]] \
         || die "WALLET_TLS=true, но WALLET_TLS_HOST пуст — адреса, по которым клиенты открывают контур (через запятую)"
 
+    # Свой CA нужен в internal и для адресов не .ts.net в tailscale (design D9).
+    # Корень — из секретов контура (change tls-ca-in-secrets): так он переживает
+    # удаление тома и смену хоста, и устройства не надо перенастраивать.
+    local ca_dir="$SECRETS_DIR/tls-ca"
+    if [[ "$mode" == "internal" || ( "$mode" == "tailscale" && ${#other_hosts[@]} -gt 0 ) ]]; then
+        if [[ -e "$ca_dir" ]]; then
+            _tls_ca_check "$ca_dir"
+            mkdir -p "$gen/ca"
+            _tls_write "$gen/ca/ca.crt" < "$ca_dir/root.crt"
+            export WALLET_TLS_CA_SRC="$ca_dir"
+            export WALLET_TLS_CA_PUBLIC="$gen/ca"
+            _TLS_CA_SERVED=1
+            # Новый корень — новая метка, compose пересоздаст прокси.
+            hash_extra="ca:$(sha256sum "$ca_dir/root.crt" | cut -c1-64)"
+        else
+            echo "==> [$ENV_NAME] tls: корень CA лежит только в томе wallet-${ENV_NAME}_tls-data и пропадёт вместе с ним; перенесите его в секреты: bash infra/env/tls-ca-init.sh $ENV_NAME" >&2
+        fi
+    fi
+
     local caddyfile
     caddyfile="$(
         echo "# Сгенерирован infra/env/tls.sh для контура $ENV_NAME — не править руками."
@@ -201,6 +255,13 @@ env_tls_prepare() {
         printf '\tocsp_stapling off\n'
         # Подключения по IP приходят без SNI (design D9).
         [[ -n "$first_ip" ]] && printf '\tdefault_sni %s\n' "$first_ip"
+        # Корень CA из секретов: Caddy выпускает от него промежуточный (в томе)
+        # и сертификаты сайтов; сам корень в томе не создаётся.
+        if [[ -n "$_TLS_CA_SERVED" ]]; then
+            printf '\tpki {\n\t\tca local {\n\t\t\troot {\n'
+            printf '\t\t\t\tcert /tls-ca/root.crt\n\t\t\t\tkey /tls-ca/root.key\n'
+            printf '\t\t\t}\n\t\t}\n\t}\n'
+        fi
         # Без HTTP/3: UDP-порт не публикуется, Alt-Svc звал бы клиентов в никуда.
         printf '\tservers {\n\t\tprotocols h1 h2\n\t}\n'
         echo "}"
@@ -241,7 +302,7 @@ env_tls_prepare() {
             done
             export WALLET_TLS_FILES_SRC="$dir"
             # Продлённый сертификат — новая метка, compose пересоздаст прокси.
-            hash_extra="$(sha256sum "$dir/fullchain.pem" | cut -c1-64)"
+            hash_extra="$hash_extra$(sha256sum "$dir/fullchain.pem" | cut -c1-64)"
             ;;
         tailscale)
             _tls_check_tailscale "${ts_hosts[0]}"

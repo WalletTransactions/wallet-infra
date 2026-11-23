@@ -477,8 +477,9 @@ services:
   # TLS на входе контура — НЕОБЯЗАТЕЛЬНЫЙ модуль (change add-tls-ingress):
   # профиль tls включает WALLET_TLS=true в infra/env/<env>.env, Caddyfile и
   # источники монтирования готовит infra/env/tls.sh. Порт: prod 8443, test 8444.
-  # Режим сертификата — WALLET_TLS_MODE: internal (CA Caddy в томе tls-data,
-  # корень — infra/env/export-ca.sh), files (${WALLET_SECRETS_DIR}/tls/),
+  # Режим сертификата — WALLET_TLS_MODE: internal (корень CA в
+  # ${WALLET_SECRETS_DIR}/tls-ca/, промежуточный — в томе tls-data; корень для
+  # устройств — https://<адрес>/ca.crt или infra/env/export-ca.sh), files (${WALLET_SECRETS_DIR}/tls/),
   # tailscale (сертификат *.ts.net от tailscaled хоста через сокет; в других
   # режимах вместо каталога сокета монтируется пустой каталог). Метка
   # wallet.tls-config меняется вместе с Caddyfile/сертификатом — compose
@@ -495,6 +496,10 @@ services:
       - tls-data:/data
       - ${WALLET_TLS_FILES_SRC:?}:/tls:ro
       - ${WALLET_TAILSCALE_DIR:?}:/var/run/tailscale
+      # Корень CA контура из секретов (tls-ca-in-secrets) и его публичная
+      # копия для /ca.crt; без корня в секретах — пустой каталог, CA в томе.
+      - ${WALLET_TLS_CA_SRC:?}:/tls-ca:ro
+      - ${WALLET_TLS_CA_PUBLIC:?}:/srv/ca:ro
     depends_on:
       wallet-gateway:
         condition: service_healthy
@@ -571,7 +576,8 @@ networks:
     internal: true
 
 # Тома проекта: wallet-<env>_db-data, wallet-<env>_redis-data,
-# wallet-<env>_tls-data (CA и сертификаты Caddy; закрытый ключ CA не покидает том).
+# wallet-<env>_tls-data (промежуточный CA и сертификаты Caddy; корень CA — в
+# секретах контура, tls-ca/, а до переноса tls-ca-init.sh — тоже в томе).
 volumes:
   db-data:
   redis-data:

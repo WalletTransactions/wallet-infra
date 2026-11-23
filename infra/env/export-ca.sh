@@ -1,9 +1,10 @@
 #!/bin/bash
 # Выгружает ПУБЛИЧНЫЙ корневой сертификат CA контура (режимы internal и
 # tailscale, change add-tls-ingress) — для установки на устройства:
-# браузеры, Android («Сертификат ЦС»). Закрытый ключ CA остаётся в томе
-# wallet-<env>_tls-data: скрипт читает только root.crt и проверяет, что в
-# выгруженном файле нет ключа.
+# браузеры, Android («Сертификат ЦС»). Корень берётся из секретов контура
+# (<secrets>/tls-ca/root.crt, change tls-ca-in-secrets), а до переноса — из тома
+# wallet-<env>_tls-data. Читается только root.crt; в выгруженном файле
+# проверяется, что ключа нет. Тот же файл прокси отдаёт по https://<адрес>/ca.crt.
 #
 # Использование:
 #   infra/env/export-ca.sh <prod|test> [файл]   (по умолчанию ./wallet-<env>-root.crt)
@@ -21,8 +22,14 @@ mode="$(env_setting WALLET_TLS_MODE)"
 
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
-env_compose exec -T tls-proxy cat /data/caddy/pki/authorities/local/root.crt > "$tmp" \
-    || die "не удалось прочитать root.crt из tls-proxy (контур поднят? CA появляется после первого запуска прокси)"
+if [[ -s "$SECRETS_DIR/tls-ca/root.crt" ]]; then
+    # Корень в секретах (tls-ca-in-secrets): читается только публичный root.crt.
+    cat "$SECRETS_DIR/tls-ca/root.crt" > "$tmp"
+else
+    # До переноса (tls-ca-init.sh) корень есть только в томе прокси.
+    env_compose exec -T tls-proxy cat /data/caddy/pki/authorities/local/root.crt > "$tmp" \
+        || die "не удалось прочитать root.crt из tls-proxy (контур поднят? CA появляется после первого запуска прокси)"
+fi
 openssl x509 -in "$tmp" -noout 2>/dev/null || die "выгруженный файл — не сертификат X.509"
 ! grep -q PRIVATE "$tmp" || die "в выгруженном файле закрытый ключ — файл не сохранён"
 mv "$tmp" "$out"
