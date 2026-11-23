@@ -39,6 +39,9 @@ WALLET_AUTH_MTLS_ALL=(wallet-telegram wallet-mcp wallet-ai)
 # shellcheck disable=SC2034  # используют скрипты, подключающие lib.sh
 WALLET_MTLS_NAMES=(google-auth wallet-api wallet-report wallet-ai wallet-gateway db
     wallet-telegram wallet-mcp wallet-docs wallet-web prometheus)
+# Клиент интеграционных тестов — см. env_mtls_prepare; путь
+# $STATE_DIR/generated/mtls/it-tests/{tls.crt,tls.key,ca.pem}.
+WALLET_MTLS_IT_NAME=it-tests
 WALLET_MTLS_DAYS="${WALLET_MTLS_DAYS:-30}"
 
 env_mtls_enabled() {
@@ -233,6 +236,11 @@ env_mtls_prepare() {
     local -a names=()
     if env_mtls_enabled; then
         names=("${WALLET_MTLS_NAMES[@]}")
+        # Клиентский сертификат интеграционных тестов (run_local.sh wallet-report и
+        # wallet-api): pg_hba.mtls.conf требует clientcert у wallet_reader на любой базе
+        # кластера, в том числе у тестовой wallet_api_it. Только не в prod: тесты там не
+        # гоняются, лишний действующий клиентский ключ контуру не нужен.
+        [[ "$ENV_NAME" != "prod" ]] && names+=("$WALLET_MTLS_IT_NAME")
     else
         names=(google-auth "${WALLET_AUTH_MTLS_SELECTED[@]}")
     fi
