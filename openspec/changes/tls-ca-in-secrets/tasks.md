@@ -17,6 +17,8 @@
 
 ## 3. Выкат
 
-- [ ] 3.1 test: `bash infra/env/tls-ca-init.sh test` на хосте (перенос; отпечаток `62:65:9F…6C:7D`), выкат тега wallet-infra
-- [ ] 3.2 test: `https://ivan-pc.tail5afb65.ts.net:8444/ca.crt` и `https://192.168.1.105.nip.io:8444/ca.crt` отдают тот же корень; `healthz` — 200 по всем адресам; телефоны с уже установленным корнем синкаются
-- [ ] 3.3 prod: `tls-ca-init.sh prod` до включения `WALLET_TLS=true`
+- [x] 3.1 test: `bash infra/env/tls-ca-init.sh test` на хосте (перенос; отпечаток `62:65:9F…6C:7D`), выкат тега wallet-infra — `v0.5.8-rc.1`, 2026-11-23
+- [x] 3.2 test: `https://ivan-pc.tail5afb65.ts.net:8444/ca.crt` и `https://192.168.1.105.nip.io:8444/ca.crt` отдают тот же корень; `healthz` — 200 по всем адресам
+      (проверено 2026-11-23: `.ts.net` — без `--cacert`, IP и nip.io — прежним выгруженным корнем; `/root.key` ключа не отдаёт)
+- [ ] 3.2a телефоны с уже установленным корнем синкаются (нет устройства на момент выката)
+- [x] 3.3 prod: `tls-ca-init.sh prod` до включения `WALLET_TLS=true` — новый корень (тома CA не было), SHA-256 `0F:FC:C3…F9:67`
