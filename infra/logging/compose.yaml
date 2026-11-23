@@ -50,8 +50,11 @@ services:
       retries: 20
     ports:
       # Тот же приём, что у db/redis в wallet-infra/compose.yaml — порт хоста НЕ
-      # 9200, чтобы не конфликтовать с локальным Elastic/OpenSearch.
-      - "19200:9200"
+      # 9200, чтобы не конфликтовать с локальным Elastic/OpenSearch. Только
+      # 127.0.0.1: security-плагин выключен (без логина), а в индексах — логи
+      # prod/test; на 0.0.0.0 их читал и удалял бы любой в LAN/tailnet.
+      # fluent-bit пишет по внутренней сети (Host opensearch), хост-порт ему не нужен.
+      - "127.0.0.1:19200:9200"
 
   opensearch-dashboards:
     image: docker.io/opensearchproject/opensearch-dashboards:2
@@ -63,7 +66,8 @@ services:
       opensearch:
         condition: service_healthy
     ports:
-      - "15601:5601" # открывать в браузере: http://localhost:15601
+      # Только 127.0.0.1 — Dashboards без логина (DISABLE_SECURITY_DASHBOARDS_PLUGIN).
+      - "127.0.0.1:15601:5601" # открывать в браузере: http://localhost:15601
 
   # Разовая настройка OpenSearch: шаблон для дневных индексов wallet-logs-*
   # (0 реплик — нода одна) и ISM-политика "удалить через 14 дней" (см.
