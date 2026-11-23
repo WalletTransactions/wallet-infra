@@ -29,18 +29,31 @@ scrape_configs:
 
   # CPU/RAM/сеть ПО КОНТЕЙНЕРАМ (container_cpu_usage_seconds_total,
   # container_memory_usage_bytes, container_network_{receive,transmit}_bytes_total,
-  # см. дашборд "Containers") — единственный сборщик здесь, которому нужны
-  # права на просмотр рантайма (cgroups/containers), не только на HTTP-порт
-  # приложения, см. подробный комментарий у самого сервиса "cadvisor" в
-  # compose.yaml про rootless-оговорки.
+  # ряд "Контейнеры" в wallet-overview.json) — единственный сборщик здесь, которому
+  # нужны права на просмотр рантайма (cgroups/containers), см. сервис "cadvisor"
+  # в compose.yaml.
+  #
+  # Метки compose (см. cadvisor в compose.yaml) укорачиваются до compose_project/
+  # compose_service, а контейнерам контуров ставится та же метка env, что у
+  # метрик сервисов, — переключатель «Контур» в Grafana действует и на них.
+  # У Jenkins, стека метрик и прочих контейнеров хоста env нет.
   - job_name: cadvisor
     static_configs:
       - targets: ["cadvisor:8080"]
+    metric_relabel_configs:
+      - source_labels: [container_label_com_docker_compose_project]
+        target_label: compose_project
+      - source_labels: [container_label_com_docker_compose_service]
+        target_label: compose_service
+      - source_labels: [container_label_com_docker_compose_project]
+        regex: wallet-(prod|test)
+        target_label: env
+      - regex: container_label_com_docker_compose_(project|service)
+        action: labeldrop
 
   # CPU/RAM/сеть ПО ХОСТУ — Linux-хост, общий для всех контейнеров обоих
   # контуров; то же самое, что container-метрики выше дают ПО ОТДЕЛЬНОСТИ,
-  # но суммарно. Метки env у хоста и контейнеров нет: cAdvisor видит
-  # контейнер только по id.
+  # но суммарно. Метки env у хоста нет — он общий.
   - job_name: node-exporter
     static_configs:
       - targets: ["node-exporter:9100"]
