@@ -251,6 +251,17 @@ if [[ -n "$base" && $rollback -eq 0 ]]; then
     }
 fi
 
+# Режим mTLS: пары для libpq (том pg-client-keys) раскладываются заново — сервис поднимается с
+# --no-deps, а mtls.sh мог только что перевыпустить его сертификат (задача 9.1, compose.mtls.yaml).
+case "$service" in
+    google-auth | wallet-api | wallet-report | wallet-docs | wallet-telegram | wallet-ai)
+        if env_mtls_enabled; then
+            env_compose run --rm --no-deps pg-client-keys >/dev/null \
+                || die "pg-client-keys не разложил пары сертификатов — $service не трогается"
+        fi
+        ;;
+esac
+
 prev="$(current_tag "$service")"
 set_tag "$service" "$image_tag"
 if env_compose up -d --no-deps --wait --wait-timeout 180 "$service" \
