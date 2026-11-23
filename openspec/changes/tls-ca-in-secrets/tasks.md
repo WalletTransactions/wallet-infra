@@ -13,6 +13,7 @@
 
 - [x] 2.1 `infra/env/README.md`: где корень, `tls-ca-init.sh`, `/ca.crt`, ручное сохранение `tls-ca/` (backup.sh секреты не копирует)
 - [x] 2.2 `README.md`: ссылка на `/ca.crt`
+- [x] 2.3 `infra/env/README.md`, «Что куда класть»: секреты, состояние, тома, бэкап; требования в `deployment-environments`
 
 ## 3. Выкат
 
