@@ -680,6 +680,11 @@ compose):
   каталог, read-only. Ключи — 644, потому что их читают разные пользователи
   контейнеров. От других пользователей хоста их закрывает каталог
   `generated/mtls` с правами 700 (его выставляет `mtls.sh`). Отдельный сертификат `prometheus` — клиентский.
+- **Сертификат интеграционных тестов** — `it-tests`, клиентский, выпускается
+  только вне prod. Им `wallet-report/tests_integration/run_local.sh` входит ролью
+  `wallet_reader` в тестовую базу `wallet_api_it`: `clientcert=verify-ca` требует
+  сертификат у этой роли на любой базе кластера. Появляется при первом `up.sh` или
+  выкате контура с этой версией wallet-infra.
 - **Обновление** — повторный запуск ничего не меняет, пока осталось больше половины
   срока, CA тот же и имена прежние; иначе сертификат перевыпускается, а compose
   пересоздаёт только его контейнер (метка `wallet.mtls-config` — хэш сертификата).
@@ -823,6 +828,7 @@ bash -c 'source infra/env/loadtest_env.sh && loadtest_restore wallet-report'
 | `migrate.sh` (мигратор в контейнере) | `verify-full` с CA контура (`generated/mtls/db/ca.pem`); режим выключен — `disable` |
 | postgres-exporter, датасорс Grafana «Perf History» | `require` (шифрование без проверки сервера); режим выключен — `disable` (`infra/monitoring/up.sh` читает режим из развёрнутого контура, поэтому после смены режима — `bash infra/monitoring/up.sh`) |
 | `docker exec … psql` в контейнере `db` | сокет, TLS не нужен |
+| интеграционные тесты (`run_local.sh`, не prod) | роль `wallet_reader` — `verify-full` с сертификатом `it-tests`; мигратор — `require` |
 | DBeaver/psql с хоста (`127.0.0.1:<порт>`) | `sslmode=require` и пароль роли, без клиентского сертификата |
 
 **Клиентский сертификат роли сервиса (задача 9.1).** Роли `google_auth`, `wallet_api`, `wallet_reader`,
