@@ -90,6 +90,9 @@ HTTPS — необязательный TLS-прокси контура (prod `:8
 `WALLET_TLS=true` в `infra/env/<env>.env`, режимы сертификата `internal`,
 `files` и `tailscale` — см. [infra/env/README.md](infra/env/README.md),
 «Необязательный TLS на входе». Тогда гейтвей публикуется только на `127.0.0.1`.
+Корень собственного CA контура хранится в секретах (`tls-ca/`, создаёт или
+переносит из тома `infra/env/tls-ca-init.sh`), устройства скачивают его по
+`https://<адрес>:<порт>/ca.crt`.
 
 Трафик между сервисами контура — обычный HTTP; взаимный TLS (mTLS) включается
 отдельно, `WALLET_INTERNAL_MTLS=true` в `infra/env/<env>.env`, свой CA на контур
