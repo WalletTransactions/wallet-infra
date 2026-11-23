@@ -232,7 +232,11 @@ env_mtls_prepare() {
     local gen="${WALLET_GENERATED_DIR:-$STATE_DIR/generated}" ca_dir name out var
     ca_dir="$(_mtls_ca)" || exit 1
     mkdir -p "$gen/mtls"
-    chmod 755 "$gen/mtls"
+    # 700: ключи сервисов внутри — 644 (их читают разные пользователи контейнеров:
+    # 999, nginx, postgres, nobody у Prometheus), поэтому от других пользователей
+    # хоста их закрывает этот каталог. Контейнерам права родителя не мешают: каталог
+    # сервиса монтирует docker (root), pg-client-keys и Jenkins работают от root.
+    chmod 700 "$gen/mtls"
     local -a names=()
     if env_mtls_enabled; then
         names=("${WALLET_MTLS_NAMES[@]}")
