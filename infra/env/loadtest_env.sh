@@ -47,16 +47,16 @@ set +a
 
 echo "==> контур $LOADTEST_ENV: сеть $LOADTEST_NETWORK, db $LOADTEST_DB_CONTAINER"
 
-# loadtest_container_id <сервис> — полный id контейнера сервиса в контуре.
-# Метка `name` у cAdvisor — это id контейнера, а не имя (docker-обработчик
-# cAdvisor выключен, см. compose.yaml стека метрик), а по `image` prod и test
-# не различить: на одном теге образ общий. Id меняется при пересоздании
-# контейнера — брать его в момент запроса к Prometheus, не заранее.
+# loadtest_container_id <сервис> — значение метки `name` у cAdvisor для
+# контейнера сервиса в контуре. С cAdvisor 0.55 (docker-обработчик, см.
+# compose.yaml стека метрик) это имя контейнера (wallet-test-wallet-api-1);
+# до него было id — отсюда имя функции, её зовут скрипты wallet-report/loadtest.
+# По `image` prod и test не различить: на одном теге образ общий.
 loadtest_container_id() {
-    docker ps --no-trunc \
+    docker ps \
         --filter "label=com.docker.compose.project=wallet-$LOADTEST_ENV" \
         --filter "label=com.docker.compose.service=$1" \
-        --format '{{.ID}}' | head -n1
+        --format '{{.Names}}' | head -n1
 }
 
 # loadtest_override <сервис> <ПЕРЕМЕННАЯ> <значение> — пересоздать сервис

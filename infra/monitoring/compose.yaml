@@ -31,69 +31,38 @@
 name: wallet-monitoring
 
 services:
-  # CPU/RAM/сеть ПО КОНТЕЙНЕРАМ. privileged:true и /rootfs, /var/run, /sys —
-  # обычный для cAdvisor набор, cgroups (cgroup v2, systemd-driver) видны
-  # полностью — но этого оказалось недостаточно (реальный инцидент
-  # 2026-09-16, все container_cpu_*/container_memory_*/container_network_*
-  # пустые, панели "Контейнеры" в wallet-overview.json ничего не рисуют):
-  # Docker здесь настроен с containerd-snapshotter (`docker info` →
-  # "Storage Driver: overlayfs, driver-type: io.containerd.snapshotter.v1"),
-  # а докеровский обработчик cAdvisor умеет искать RW-слой контейнера только
-  # по старой раскладке overlay2-графдрайвера
-  # (/var/lib/docker/image/overlayfs/layerdb/mounts/<id>/mount-id) — при
-  # containerd-snapshotter этого файла просто нет, лог cAdvisor заполнен
-  # "failed to identify the read-write layer ID ... no such file or
-  # directory" для каждого контейнера, ни один не регистрируется вообще
-  # (не только без файловой статистики — контейнер целиком не создаётся).
-  # Фикс — не трогать сам Docker (containerd-snapshotter — фича всего хоста,
-  # откатывать её ради одного cAdvisor не стоит), а включить у cAdvisor
-  # containerd-обработчик вместо докеровского: сокет уже виден (тот же
-  # /var/run:/var/run:ro, /run — симлинк на /var/run), не хватало только
-  # --containerd-namespace — дефолт "k8s.io" (расчёт на CRI/Kubernetes),
-  # а Docker с containerd держит СВОИ контейнеры в неймспейсе "moby"
-  # (`ctr -n moby containers list` на хосте — то же самое видно и в
-  # journalctl -u containerd).
+  # CPU/RAM/сеть/диск ПО КОНТЕЙНЕРАМ — всех на хосте, не только контуров:
+  # Jenkins (buildplatform), сам стек метрик, portainer и т.д.
   #
-  # UPDATE (реальный повторный инцидент, та же дата расследования): одного
-  # --containerd-namespace НЕДОСТАТОЧНО — cAdvisor регистрирует ОБА
-  # обработчика сразу (докеровский И containerd), докеровский по-прежнему
-  # успешно подключается к /var/run/docker.sock (та же примонтированная
-  # /var/run) и по имени cgroup ("docker-<id>.scope") УСПЕВАЕТ ПЕРВЫМ
-  # заявить контейнер себе — и тут же падает на том же самом отсутствующем
-  # overlayfs/layerdb/mounts (см. выше), так что containerd-обработчик до
-  # этих контейнеров просто не дотягивается. Убрали и /var/lib/docker
-  # (лишний — /rootfs уже покрывает то же самое, а докеровскому обработчику
-  # он был нужен только для чтения layerdb, которого при
-  # containerd-snapshotter не существует), и явно направили -docker на
-  # заведомо несуществующий сокет — тогда докеровский обработчик у cAdvisor
-  # не РЕГИСТРИРУЕТСЯ вовсе (штатный для cAdvisor путь — то же самое, что на
-  # хосте вообще без Docker), и containerd-обработчик остаётся единственным
-  # претендентом. Проверено на этом стенде — container_cpu_usage_seconds_total
-  # снова заполнен, с image=<настоящий образ>, name=<container id> (см.
-  # комментарий у панелей "Контейнеры" в wallet-overview.json, почему
-  # легенда по image, не по name).
-  # Проверить: curl http://localhost:18080/metrics | grep container_cpu —
-  # если снова пусто, второй фолбэк (после containerd-namespace) — "Хост"
-  # ниже (node-exporter), он видит хост целиком, не по контейнерам.
+  # Docker здесь с containerd-snapshotter (`docker info` → driver-type
+  # io.containerd.snapshotter.v1). cAdvisor до v0.52 искал RW-слой по
+  # раскладке overlay2 (layerdb/mounts) и на таком хосте не регистрировал ни
+  # одного контейнера (инцидент 2026-09-16); обходом был containerd-обработчик,
+  # но он знает контейнер только по id (name=<id>), без compose-меток — контур
+  # prod/test в Grafana было не различить, сетевых метрик не было вовсе.
+  # С 0.55 докеровский обработчик снова работает (проверено 2026-11-23): у
+  # серий name=<имя контейнера> (wallet-prod-wallet-api-1, buildplatform-jenkins-1)
+  # и метки compose — по ним фильтры «Контур» и «Контейнер» в wallet-overview.json.
+  # Метки контейнеров — только две нужные (иначе каждая серия тащит ~40 меток
+  # образов). /var/lib/docker — для размера RW-слоя, без него лог в ошибках
+  # fsHandler на каждый контейнер.
+  # Проверить: curl http://localhost:18080/metrics | grep 'container_cpu.*wallet-prod'
   cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    image: ghcr.io/google/cadvisor:0.55.1
     restart: "no"
     privileged: true
     volumes:
       - /:/rootfs:ro
       - /var/run:/var/run:ro
       - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
     command:
-      - --docker_only=false
+      - --docker_only=true
       - --housekeeping_interval=10s
-      - --containerd=/run/containerd/containerd.sock
-      - --containerd-namespace=moby
-      # Несуществующий путь — намеренно, см. UPDATE выше: не даёт
-      # докеровскому обработчику зарегистрироваться и перехватить
-      # контейнеры раньше containerd-обработчика.
-      - --docker=unix:///nonexistent/docker.sock
+      - --store_container_labels=false
+      - --whitelisted_container_labels=com.docker.compose.project,com.docker.compose.service
     ports:
-      - "18080:8080" # http://localhost:18080 — своя мини-веб-морда cAdvisor, удобно для проверки живьём
+      - "127.0.0.1:18080:8080" # http://localhost:18080 — своя мини-веб-морда cAdvisor, удобно для проверки живьём
     networks:
       - monitoring
 
@@ -115,7 +84,7 @@ services:
       - --path.rootfs=/rootfs
       - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)
     ports:
-      - "19100:9100"
+      - "127.0.0.1:19100:9100"
     networks:
       - monitoring
 
@@ -224,7 +193,7 @@ services:
       - ${PROM_MTLS_PROD_DIR:?}:/etc/prometheus/mtls/prod:ro
       - prometheus-data:/prometheus
     ports:
-      - "19090:9090" # http://localhost:19090 — PromQL-консоль самого Prometheus, страница /targets — какие скрейпы живы
+      - "100.99.153.113:19090:9090" # только tailnet; http://localhost:19090 — PromQL-консоль самого Prometheus, страница /targets — какие скрейпы живы
     networks:
       - monitoring
       - wallet-prod
@@ -260,7 +229,7 @@ services:
     depends_on:
       - prometheus
     ports:
-      - "13000:3000" # открывать в браузере: http://localhost:13000 (пароль admin — monitoring.env)
+      - "100.99.153.113:13000:3000" # только tailnet; открывать в браузере: http://localhost:13000 (пароль admin — monitoring.env)
     networks:
       - monitoring
       # perf_history (datasource "Perf History") — только в контуре test.
